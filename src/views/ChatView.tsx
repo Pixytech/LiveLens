@@ -9,16 +9,16 @@ interface OfflineModel {
 }
 
 const OFFLINE_MODELS: OfflineModel[] = [
-  { id: 'HuggingFaceTB/SmolLM2-135M-Instruct',      label: 'SmolLM2 135M',       size: '~270 MB',  speed: '⚡⚡⚡', note: 'Fastest — good for demos',                  ctxTokens: 2048,   group: 'General' },
-  { id: 'HuggingFaceTB/SmolLM2-360M-Instruct',      label: 'SmolLM2 360M',       size: '~720 MB',  speed: '⚡⚡',  note: 'Better quality responses',                  ctxTokens: 2048,   group: 'General' },
-  { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct',      label: 'SmolLM2 1.7B',       size: '~3.4 GB',  speed: '⚡',   note: 'Best SmolLM quality',                       ctxTokens: 8192,   group: 'General' },
-  { id: 'onnx-community/Qwen2.5-0.5B-Instruct',      label: 'Qwen 2.5 0.5B',      size: '~1 GB',    speed: '⚡⚡',  note: 'Strong reasoning, multilingual',             ctxTokens: 4096,   group: 'General' },
-  { id: 'onnx-community/Qwen2.5-1.5B-Instruct',      label: 'Qwen 2.5 1.5B',      size: '~2 GB',    speed: '⚡',   note: 'Better multilingual reasoning',              ctxTokens: 4096,   group: 'General' },
-  { id: 'onnx-community/Llama-3.2-1B-Instruct',      label: 'Llama 3.2 1B',       size: '~2 GB',    speed: '⚡',   note: 'Meta — general purpose',                    ctxTokens: 131072, group: 'General' },
-  { id: 'onnx-community/Phi-3.5-mini-instruct',       label: 'Phi 3.5 Mini',        size: '~2.2 GB',  speed: '⚡',   note: 'Microsoft — strong reasoning & code',        ctxTokens: 131072, group: 'General' },
-  { id: 'onnx-community/Qwen2.5-Coder-0.5B-Instruct', label: 'Qwen2.5-Coder 0.5B', size: '~1 GB',    speed: '⚡⚡⚡', note: 'Fastest code model — snippets, Q&A',        ctxTokens: 32768,  group: 'Code' },
-  { id: 'onnx-community/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder 1.5B', size: '~2 GB',    speed: '⚡⚡',  note: 'Code generation, debugging, tech questions', ctxTokens: 32768,  group: 'Code' },
-  { id: 'onnx-community/Qwen2.5-Coder-3B-Instruct',   label: 'Qwen2.5-Coder 3B',   size: '~3 GB',    speed: '⚡',   note: 'Best in-browser coding model',               ctxTokens: 32768,  group: 'Code' },
+  { id: 'HuggingFaceTB/SmolLM2-135M-Instruct',      label: 'SmolLM2 135M',       size: '~270 MB',  speed: '⚡⚡⚡', note: 'Very small model — loads instantly. Suitable for simple, short factual Q&A only. Struggles with multi-turn conversation or complex reasoning.',        ctxTokens: 2048,   group: 'General' },
+  { id: 'HuggingFaceTB/SmolLM2-360M-Instruct',      label: 'SmolLM2 360M',       size: '~720 MB',  speed: '⚡⚡',  note: 'Small general-purpose model. Better than 135M for basic chat, still limited on nuanced or multi-step questions.',                               ctxTokens: 2048,   group: 'General' },
+  { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct',      label: 'SmolLM2 1.7B',       size: '~3.4 GB',  speed: '⚡',   note: 'Best of the SmolLM2 series. Good for general conversation, summaries, and light reasoning. Recommended starting point for general chat.',       ctxTokens: 8192,   group: 'General' },
+  { id: 'onnx-community/Qwen2.5-0.5B-Instruct',      label: 'Qwen 2.5 0.5B',      size: '~1 GB',    speed: '⚡⚡',  note: 'Very small model from Alibaba. Fast but limited — only suitable for short, structured tasks. Not recommended for open-ended conversation.',      ctxTokens: 4096,   group: 'General' },
+  { id: 'onnx-community/Qwen2.5-1.5B-Instruct',      label: 'Qwen 2.5 1.5B',      size: '~2 GB',    speed: '⚡',   note: 'Solid general-purpose model. Handles conversation, multilingual input, and light reasoning well. Good balance of size and quality.',             ctxTokens: 4096,   group: 'General' },
+  { id: 'onnx-community/Llama-3.2-1B-Instruct',      label: 'Llama 3.2 1B',       size: '~2 GB',    speed: '⚡',   note: 'Meta\'s smallest Llama model. Well-rounded for general chat, instruction-following, and summaries. A reliable all-rounder for everyday use.',  ctxTokens: 131072, group: 'General' },
+  { id: 'onnx-community/Phi-3.5-mini-instruct',       label: 'Phi 3.5 Mini',        size: '~2.2 GB',  speed: '⚡',   note: 'Microsoft\'s compact but capable model. Excels at reasoning, structured tasks, and code. Punches well above its size — best overall quality here.', ctxTokens: 131072, group: 'General' },
+  { id: 'onnx-community/Qwen2.5-Coder-0.5B-Instruct', label: 'Qwen2.5-Coder 0.5B', size: '~1 GB',    speed: '⚡⚡⚡', note: 'Code-only model — do not use for general chat. Best for quick syntax questions, short snippets, and code completion hints. Very limited reasoning.', ctxTokens: 32768,  group: 'Code' },
+  { id: 'onnx-community/Qwen2.5-Coder-1.5B-Instruct', label: 'Qwen2.5-Coder 1.5B', size: '~2 GB',    speed: '⚡⚡',  note: 'Code-focused model. Good for explaining code, debugging, and answering technical questions. Not designed for general conversation.',             ctxTokens: 32768,  group: 'Code' },
+  { id: 'onnx-community/Qwen2.5-Coder-3B-Instruct',   label: 'Qwen2.5-Coder 3B',   size: '~3 GB',    speed: '⚡',   note: 'Best in-browser coding model. Handles code review, refactoring, and technical explanations well. Use a General model if you need general chat.', ctxTokens: 32768,  group: 'Code' },
 ];
 
 // ── API providers ─────────────────────────────────────────────────────────────
@@ -31,9 +31,9 @@ const API_PROVIDERS = {
     keyPlaceholder: 'sk-ant-api03-…',
     docsLabel: 'console.anthropic.com', docsUrl: 'https://console.anthropic.com/settings/keys',
     models: [
-      { id: 'claude-sonnet-4-5',        label: 'Claude Sonnet 4.5' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-      { id: 'claude-opus-4-5',           label: 'Claude Opus 4.5' },
+      { id: 'claude-sonnet-4-5',         label: 'Claude Sonnet 4.5',  note: 'Best balance of speed and intelligence. Ideal for most tasks — writing, analysis, coding, and complex reasoning. Recommended default.' },
+      { id: 'claude-haiku-4-5-20251001',  label: 'Claude Haiku 4.5',   note: 'Fastest and most cost-efficient Claude model. Great for simple Q&A, quick summaries, and high-volume tasks where speed matters.' },
+      { id: 'claude-opus-4-5',            label: 'Claude Opus 4.5',    note: 'Most capable Claude model. Best for deeply complex reasoning, nuanced writing, and tasks where quality matters more than speed.' },
     ],
     defaultModel: 'claude-sonnet-4-5',
   },
@@ -42,9 +42,9 @@ const API_PROVIDERS = {
     keyPlaceholder: 'sk-proj-…',
     docsLabel: 'platform.openai.com', docsUrl: 'https://platform.openai.com/api-keys',
     models: [
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-      { id: 'gpt-4o',      label: 'GPT-4o' },
-      { id: 'o1-mini',     label: 'o1 Mini' },
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini', note: 'Fast and affordable GPT-4 class model. Good for everyday chat, drafting, and coding assistance. Best value for most use cases.' },
+      { id: 'gpt-4o',      label: 'GPT-4o',      note: 'Flagship multimodal model. Excels at complex reasoning, coding, and nuanced tasks. Slower and more expensive than Mini but significantly more capable.' },
+      { id: 'o1-mini',     label: 'o1 Mini',      note: 'Reasoning-focused model that thinks before answering. Best for math, logic, and multi-step problems. Slower by design — not suited for casual chat.' },
     ],
     defaultModel: 'gpt-4o-mini',
   },
@@ -53,9 +53,9 @@ const API_PROVIDERS = {
     keyPlaceholder: '',
     docsLabel: 'console.cloud.google.com', docsUrl: 'https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com',
     models: [
-      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-      { id: 'gemini-1.5-pro',   label: 'Gemini 1.5 Pro' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', note: 'Latest and fastest Gemini model. Excellent for general chat, coding, and real-time tasks. Recommended default for most Gemini users.' },
+      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', note: 'Older but very capable fast model. Good all-rounder for conversation, summarisation, and structured tasks at lower cost.' },
+      { id: 'gemini-1.5-pro',   label: 'Gemini 1.5 Pro',   note: 'Most capable Gemini 1.5 model with a very large context window. Best for long documents, in-depth analysis, and complex reasoning.' },
     ],
     defaultModel: 'gemini-2.0-flash',
   },
@@ -124,7 +124,7 @@ export function ChatView() {
   // Derived
   const offlineModel  = OFFLINE_MODELS.find(m => m.id === offlineId) ?? OFFLINE_MODELS[0];
   const apiCfg        = source !== 'offline' ? API_PROVIDERS[source as ApiProvider] : null;
-  const apiModels     = apiCfg?.models as readonly { id: string; label: string }[] | undefined;
+  const apiModels     = apiCfg?.models as readonly { id: string; label: string; note: string }[] | undefined;
   const ctxTokens     = source === 'offline' ? offlineModel.ctxTokens : 131072;
   const usedTokens    = estimateTokens(messages, systemPrompt);
   const ctxPct        = Math.min(100, Math.round((usedTokens / ctxTokens) * 100));
@@ -492,7 +492,10 @@ export function ChatView() {
                 <select className="speech-select" value={apiModel} onChange={e => setApiModel(e.target.value)} disabled={status === 'generating'}>
                   {apiModels?.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
-                <div style={{ height: 10 }} />
+                {apiModels?.find(m => m.id === apiModel)?.note && (
+                  <p className="chat-settings-hint">{apiModels.find(m => m.id === apiModel)!.note}</p>
+                )}
+                <div style={{ height: 6 }} />
                 <span className="chat-settings-label">API Key</span>
                 <input
                   type="password"
@@ -516,7 +519,10 @@ export function ChatView() {
                 <select className="speech-select" value={apiModel} onChange={e => setApiModel(e.target.value)} disabled={status === 'generating'}>
                   {apiModels?.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
-                <div style={{ height: 10 }} />
+                {apiModels?.find(m => m.id === apiModel)?.note && (
+                  <p className="chat-settings-hint">{apiModels.find(m => m.id === apiModel)!.note}</p>
+                )}
+                <div style={{ height: 6 }} />
                 <span className="chat-settings-label">Google Client ID</span>
                 <input
                   type="text"
