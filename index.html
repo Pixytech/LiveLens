@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LiveLens — client-side vision + analytics</title>
+    <meta
+      name="description"
+      content="Real-time webcam object detection (TensorFlow.js) paired with live statistical analytics running in Python via Pyodide — entirely client-side, no server."
+    />
+    <!--
+      Pyodide (~10MB, lazy-fetched, cached by the browser after first load) is
+      loaded from a CDN rather than bundled, so the app shell itself stays
+      small and Vite never has to deal with WASM asset resolution.
+    -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
