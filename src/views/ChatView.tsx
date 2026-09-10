@@ -63,8 +63,7 @@ const API_PROVIDERS = {
 
 // ── System prompts ────────────────────────────────────────────────────────────
 
-const DEFAULT_SYSTEM = 'You are a helpful, concise assistant. Keep answers short and clear.';
-const CODE_SYSTEM    = 'You are an expert software engineer. Explain code clearly, answer technical questions concisely, and always use fenced code blocks with the language name. Keep answers focused and practical.';
+const DEFAULT_SYSTEM = 'You are a helpful assistant. Answer clearly and concisely.';
 
 function estimateTokens(msgs: ChatMsg[], sys: string) {
   return Math.round((sys + msgs.map(m => m.content).join(' ')).length / 4);
@@ -147,17 +146,6 @@ export function ChatView() {
     if (source === 'gemini')  setStatus(geminiToken ? 'ready' : 'idle');
   }, [source, claudeKey, openaiKey, geminiToken]);
 
-  // Auto-swap system prompt between offline Code group and general
-  const prevGroupRef = useRef(offlineModel.group);
-  useEffect(() => {
-    if (source !== 'offline') return;
-    const prev = prevGroupRef.current;
-    const next = offlineModel.group;
-    if (prev === next) return;
-    prevGroupRef.current = next;
-    const isDefault = systemPrompt === DEFAULT_SYSTEM || systemPrompt === CODE_SYSTEM;
-    if (isDefault) setSystemPrompt(next === 'Code' ? CODE_SYSTEM : DEFAULT_SYSTEM);
-  }, [offlineModel.group, systemPrompt, source]);
 
   // Persist selections
   useEffect(() => { localStorage.setItem('chat_source', source); }, [source]);
@@ -569,19 +557,22 @@ export function ChatView() {
               </button>
             </div>
             <div className="chat-settings-section" style={{ flex: 1 }}>
+              <p className="chat-settings-hint" style={{ marginTop: 0 }}>
+                A system prompt tells the AI <strong>who it is</strong> and <strong>how to behave</strong> before the conversation starts — like giving someone a briefing before a meeting. Use it to set the tone, topic, or personality. Leave it as-is for general use.
+              </p>
               <textarea
                 className="chat-input chat-system-prompt"
-                style={{ flex: 1, resize: 'vertical', minHeight: 120 }}
+                style={{ flex: 1, resize: 'vertical', minHeight: 100 }}
                 value={systemPrompt}
                 onChange={e => setSystemPrompt(e.target.value)}
-                placeholder="You are a helpful assistant…"
+                placeholder={`Examples:\n• "You are a friendly cooking assistant. Suggest recipes based on ingredients I have."\n• "You are a travel guide. Give practical tips and destination ideas."\n• "You are a fitness coach. Give workout advice tailored to beginners."\n• "You are a creative writing partner. Help me brainstorm and refine story ideas."`}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <p className="chat-settings-hint" style={{ margin: 0 }}>Takes effect on the next message.</p>
+                <p className="chat-settings-hint" style={{ margin: 0 }}>Changes take effect on the next message you send.</p>
                 <button
                   className="chat-ctx-reset"
-                  onClick={() => setSystemPrompt(source === 'offline' && offlineModel.group === 'Code' ? CODE_SYSTEM : DEFAULT_SYSTEM)}
-                  disabled={systemPrompt === (source === 'offline' && offlineModel.group === 'Code' ? CODE_SYSTEM : DEFAULT_SYSTEM)}
+                  onClick={() => setSystemPrompt(DEFAULT_SYSTEM)}
+                  disabled={systemPrompt === DEFAULT_SYSTEM}
                 >
                   Reset
                 </button>
