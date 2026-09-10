@@ -3,12 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LiveLens — client-side vision + analytics</title>
+    <title>LiveLens</title>
     <meta
       name="description"
-      content="Real-time webcam object detection (TensorFlow.js) paired with live statistical analytics running in Python via Pyodide — entirely client-side, no server."
+      content="Real-time object detection with live statistical analytics — nothing leaves this tab."
     />
     <script defer src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+    <!-- Google Identity Services for Gemini OAuth -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <div id="root"></div>
