@@ -31,12 +31,16 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
     try {
       pipe = null;
       const device = await detectDevice();
+      const fileProgress = new Map<string, { loaded: number; total: number }>();
       pipe = await pipeline('text-generation', data.modelId, {
         device,
         dtype: device === 'webgpu' ? 'q4f16' : 'q4',
         progress_callback: (p: { status: string; loaded?: number; total?: number; file?: string }) => {
-          if (p.status === 'progress' && p.total) {
-            self.postMessage({ type: 'progress', loaded: p.loaded ?? 0, total: p.total, file: p.file ?? '' });
+          if (p.status === 'progress' && p.total && p.file) {
+            fileProgress.set(p.file, { loaded: p.loaded ?? 0, total: p.total });
+            let totalLoaded = 0, totalSize = 0;
+            for (const v of fileProgress.values()) { totalLoaded += v.loaded; totalSize += v.total; }
+            self.postMessage({ type: 'progress', loaded: totalLoaded, total: totalSize, file: p.file });
           }
         },
       }) as TextGenerationPipeline;
