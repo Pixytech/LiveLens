@@ -4,13 +4,15 @@ import { VideoCanvas } from "./VideoCanvas";
 import { DetectView } from "../views/DetectView";
 import { SpeechView } from "../views/SpeechView";
 import { ChatView } from "../views/ChatView";
+import { MonitorView } from "../views/MonitorView";
 
-type TabId = "detect" | "speech" | "chat";
+type TabId = "detect" | "speech" | "chat" | "monitor";
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: "detect", label: "Detect" },
-  { id: "speech", label: "Speech" },
-  { id: "chat",   label: "Chat" },
+  { id: "detect",  label: "Detect" },
+  { id: "speech",  label: "Speech" },
+  { id: "chat",    label: "Chat" },
+  { id: "monitor", label: "Monitor" },
 ];
 
 interface Props {
@@ -22,6 +24,8 @@ interface Props {
   activeTab: TabId;
   onTabChange: (id: TabId) => void;
 }
+
+export type { TabId };
 
 export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, activeTab, onTabChange }: Props) {
   const active = activeTab;
@@ -64,8 +68,9 @@ export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, a
           <div className="video-offscreen">
             <VideoCanvas videoRef={videoRef} tracked={tracked} />
           </div>
-          {active === "speech" && <SpeechView />}
-          {active === "chat"   && <ChatView />}
+          {active === "speech"  && <SpeechView />}
+          {active === "chat"    && <ChatView />}
+          {active === "monitor" && <MonitorView />}
         </>
       )}
     </div>

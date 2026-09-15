@@ -3,7 +3,7 @@ import type { TextGenerationPipeline } from '@huggingface/transformers';
 
 type InMsg =
   | { type: 'load'; modelId: string }
-  | { type: 'generate'; messages: ChatMessage[]; maxTokens: number; temperature: number }
+  | { type: 'generate'; messages: ChatMessage[]; maxTokens: number; temperature: number; repetitionPenalty?: number }
   | { type: 'abort' };
 
 export interface ChatMessage {
@@ -84,6 +84,7 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
         max_new_tokens: data.maxTokens,
         temperature: data.temperature,
         do_sample: data.temperature > 0,
+        repetition_penalty: data.repetitionPenalty ?? 1.0,
         return_full_text: false,
         streamer,
       });

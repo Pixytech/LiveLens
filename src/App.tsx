@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Header } from "./components/Header";
-import { AppTabs } from "./components/AppTabs";
+import { AppTabs, type TabId } from "./components/AppTabs";
 import { useObjectDetection } from "./hooks/useObjectDetection";
 import { usePyodideAnalytics } from "./hooks/usePyodideAnalytics";
 
-type TabId = "detect" | "speech" | "chat";
-const VALID_TABS = new Set<TabId>(["detect", "speech", "chat"]);
+const VALID_TABS = new Set<TabId>(["detect", "speech", "chat", "monitor"]);
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
