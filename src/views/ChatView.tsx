@@ -78,7 +78,7 @@ export function ChatView() {
   const [messages, setMessages]       = useState<ChatMsg[]>([]);
   const [input, setInput]             = useState('');
   const [streamBuf, setStreamBuf]     = useState('');
-  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM);
+  const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem('chat_system_prompt') ?? DEFAULT_SYSTEM);
   const [showSettings, setShowSettings] = useState(false);
   const [showSysPrompt, setShowSysPrompt] = useState(false);
   const [status, setStatus]           = useState<Status>('idle');
@@ -132,6 +132,7 @@ export function ChatView() {
   useEffect(() => { localStorage.setItem('chat_source', source); }, [source]);
   useEffect(() => { localStorage.setItem('chat_offline_model', offlineId); }, [offlineId]);
   useEffect(() => { localStorage.setItem('chat_api_model', apiModel); }, [apiModel]);
+  useEffect(() => { localStorage.setItem('chat_system_prompt', systemPrompt); }, [systemPrompt]);
 
   // Reset api model when source changes (only if stored model doesn't belong to this provider)
   useEffect(() => {
