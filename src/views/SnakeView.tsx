@@ -47,6 +47,48 @@ function loadRunLog(): RunLog[] {
   } catch { return []; }
 }
 
+interface AggregateRow {
+  key: string;
+  model: string;
+  device: string;
+  runs: number;
+  avgScore: number;
+  avgMoves: number;
+  avgTokensPerSec: number;
+  avgLatencyMs: number;
+  avgCorrected: number;
+}
+
+// Every finished run is logged individually (see recordRun), so replaying
+// the same model repeatedly would otherwise show one row per attempt. Group
+// by model + device — not just model, since WebGPU vs WASM performance for
+// the same weights isn't comparable — and average each stat, so the table
+// reads as a per-model-config comparison instead of a raw run history.
+function aggregateRunLog(log: RunLog[]): AggregateRow[] {
+  const groups = new Map<string, RunLog[]>();
+  for (const r of log) {
+    const key = `${r.model}||${r.device}`;
+    const list = groups.get(key);
+    if (list) list.push(r); else groups.set(key, [r]);
+  }
+  const avg = (runs: RunLog[], pick: (r: RunLog) => number) =>
+    runs.reduce((sum, r) => sum + pick(r), 0) / runs.length;
+
+  return [...groups.entries()]
+    .map(([key, runs]) => ({
+      key,
+      model: runs[0].model,
+      device: runs[0].device,
+      runs: runs.length,
+      avgScore: avg(runs, r => r.score),
+      avgMoves: avg(runs, r => r.moves),
+      avgTokensPerSec: avg(runs, r => r.avgTokensPerSec),
+      avgLatencyMs: avg(runs, r => r.avgLatencyMs),
+      avgCorrected: avg(runs, r => r.corrected),
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+}
+
 function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 export function SnakeView() {
@@ -223,6 +265,7 @@ export function SnakeView() {
 
   const bodySet = new Set(gameState.snake.slice(1).map(p => `${p.x},${p.y}`));
   const head = gameState.snake[0];
+  const aggregatedLog = aggregateRunLog(runLog);
 
   return (
     <div className="view snake-view">
@@ -349,26 +392,27 @@ export function SnakeView() {
           {runLog.length > 0 && <button className="chat-ctx-clear" onClick={clearLog}>Clear</button>}
         </div>
         {runLog.length === 0 ? (
-          <p className="empty">Finish a run (let the snake die, or reset after some moves) to log it here and compare models.</p>
+          <p className="empty">Finish a run (let the snake die, or reset after some moves) to log it here and compare models. Replaying a model averages its stats across all its runs.</p>
         ) : (
           <div className="snake-log-wrap">
             <table className="snake-log-table">
               <thead>
                 <tr>
-                  <th>Model</th><th>Device</th><th>Score</th><th>Moves</th>
-                  <th>Avg tok/s</th><th>Avg latency</th><th>Shielded</th>
+                  <th>Model</th><th>Device</th><th>Runs</th><th>Avg score</th><th>Avg moves</th>
+                  <th>Avg tok/s</th><th>Avg latency</th><th>Avg shielded</th>
                 </tr>
               </thead>
               <tbody>
-                {runLog.map(r => (
-                  <tr key={r.id}>
+                {aggregatedLog.map(r => (
+                  <tr key={r.key}>
                     <td>{r.model}</td>
                     <td>{r.device.toUpperCase()}</td>
-                    <td>{r.score}</td>
-                    <td>{r.moves}</td>
+                    <td>{r.runs}</td>
+                    <td>{r.avgScore.toFixed(1)}</td>
+                    <td>{r.avgMoves.toFixed(0)}</td>
                     <td>{r.avgTokensPerSec.toFixed(1)}</td>
                     <td>{r.avgLatencyMs.toFixed(0)} ms</td>
-                    <td>{r.corrected}</td>
+                    <td>{r.avgCorrected.toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>
