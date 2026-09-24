@@ -51,13 +51,36 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tokenizer = (pipe as any).tokenizer;
+      // The weakest models here don't reliably answer the instruction at
+      // all — at greedy decoding with only a few tokens of budget, some of
+      // them just continue the board description instead ("Head (0", "(0,")
+      // rather than ever producing a direction word. Ending the prompt with
+      // an open "Direction:" cue, instead of leaving it at the chat
+      // template's generic assistant-turn opener, primes the very next
+      // token toward an answer-style completion — closer to the QA-style
+      // format small instruct models are actually tuned on.
+      //
+      // Even when that works, weak models tend to just echo the "dir X"
+      // token already sitting in the prompt instead of computing which way
+      // actually closes the distance to food — e.g. answering the current
+      // heading regardless of where the food is. The one-shot example below
+      // deliberately picks a case where the right answer differs from the
+      // current direction, so copying "dir X" verbatim is visibly wrong —
+      // in-context examples steer small instruct models far more reliably
+      // than instructions alone.
       const promptText: string = await tokenizer.apply_chat_template(
         [
-          { role: 'system', content: 'Snake game. Reply one word only: UP, DOWN, LEFT, or RIGHT.' },
+          {
+            role: 'system',
+            content: 'Snake game. Reply one word only: UP, DOWN, LEFT, or RIGHT — the direction that '
+              + "closes the distance to the food, which is not always the current direction.",
+          },
+          { role: 'user', content: 'Head (5,5) dir RIGHT. Food 3 up, 2 left.' },
+          { role: 'assistant', content: 'Direction: UP' },
           { role: 'user', content: data.prompt },
         ],
         { tokenize: false, add_generation_prompt: true }
-      );
+      ) + 'Direction:';
 
       let tokenCount = 0;
       let text = '';
@@ -70,7 +93,7 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
       const start = performance.now();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (pipe as any)(promptText, {
-        max_new_tokens: 3,
+        max_new_tokens: 4,
         do_sample: false,
         return_full_text: false,
         streamer,
@@ -80,6 +103,7 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
       self.postMessage({
         type: 'result',
         text,
+        prompt: data.prompt, // echoed back so the caller can log input next to output
         tokens: tokenCount,
         elapsedMs,
         tokensPerSec: tokenCount > 0 ? (tokenCount / elapsedMs) * 1000 : 0,

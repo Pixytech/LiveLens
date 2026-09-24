@@ -12,7 +12,7 @@ const MAX_RUNS_LOGGED = 20;
 
 type Status = 'idle' | 'loading' | 'ready' | 'error';
 
-interface WorkerResult { type: 'result'; text: string; tokens: number; elapsedMs: number; tokensPerSec: number; }
+interface WorkerResult { type: 'result'; text: string; prompt: string; tokens: number; elapsedMs: number; tokensPerSec: number; }
 interface WorkerError   { type: 'error'; message: string; }
 type DecideReply = WorkerResult | WorkerError;
 
@@ -201,11 +201,26 @@ export function SnakeView() {
         return;
       }
 
-      const dir = parseDirection(reply.text) ?? snapshot.direction;
-      const { state: next, corrected } = stepSnakeGame(snapshot, dir);
+      const parsedDir = parseDirection(reply.text);
+      const requestedDir = parsedDir ?? snapshot.direction;
+      const { state: next, corrected } = stepSnakeGame(snapshot, requestedDir);
       stateRef.current = next;
       setGameState(next);
-      setLastMove(`${dir}${corrected ? ' (corrected)' : ''} · "${reply.text.trim().slice(0, 24)}"`);
+      // next.direction is what actually got applied — when the shield
+      // overrides (corrected), that's *not* the same as requestedDir, so
+      // logging requestedDir here was silently mislabeling every shielded
+      // move as if the model's own choice had been used.
+      setLastMove(`${next.direction}${corrected ? ' (corrected)' : ''} · "${reply.text.trim().slice(0, 24)}"`);
+      // Devtools-only, not surfaced in the UI — for debugging why a model
+      // plays badly (or not at all): the exact board-state string sent in
+      // (prompt), the raw reply, whether it parsed to a direction at all,
+      // what was requested vs. what the shield actually applied — worth
+      // telling apart when a model looks stuck.
+      console.log(
+        `[snake] #${statsRef.current.moves + 1} prompt=${JSON.stringify(reply.prompt)} raw=${JSON.stringify(reply.text)} ` +
+        `parsed=${parsedDir ?? 'none'} requested=${requestedDir} used=${next.direction}${corrected ? ' (shielded)' : ''} ` +
+        `${reply.elapsedMs.toFixed(0)}ms ${reply.tokensPerSec.toFixed(1)}tok/s`
+      );
 
       const updated: Stats = {
         moves: statsRef.current.moves + 1,
