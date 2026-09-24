@@ -5,10 +5,12 @@ import { DetectView } from "../views/DetectView";
 import { SpeechView } from "../views/SpeechView";
 import { ChatView } from "../views/ChatView";
 import { MonitorView } from "../views/MonitorView";
+import { SnakeView } from "../views/SnakeView";
 
-type TabId = "detect" | "speech" | "chat" | "monitor";
+type TabId = "detect" | "speech" | "chat" | "monitor" | "snake";
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "snake",   label: "Snake" },
   { id: "detect",  label: "Detect" },
   { id: "speech",  label: "Speech" },
   { id: "chat",    label: "Chat" },
@@ -71,6 +73,7 @@ export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, a
           {active === "speech"  && <SpeechView />}
           {active === "chat"    && <ChatView />}
           {active === "monitor" && <MonitorView />}
+          {active === "snake"   && <SnakeView />}
         </>
       )}
     </div>

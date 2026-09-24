@@ -4,14 +4,14 @@ import { AppTabs, type TabId } from "./components/AppTabs";
 import { useObjectDetection } from "./hooks/useObjectDetection";
 import { usePyodideAnalytics } from "./hooks/usePyodideAnalytics";
 
-const VALID_TABS = new Set<TabId>(["detect", "speech", "chat", "monitor"]);
+const VALID_TABS = new Set<TabId>(["detect", "speech", "chat", "monitor", "snake"]);
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [camError, setCamError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const saved = localStorage.getItem("active_tab") as TabId | null;
-    return saved && VALID_TABS.has(saved) ? saved : "detect";
+    return saved && VALID_TABS.has(saved) ? saved : "snake";
   });
 
   const streamRef = useRef<MediaStream | undefined>();

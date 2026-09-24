@@ -1199,3 +1199,105 @@ body {
   gap: 8px;
   align-items: center;
 }
+
+/* ── Snake view ──────────────────────────────────────────────────────────── */
+
+.snake-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .snake-grid { grid-template-columns: 1fr; }
+}
+
+.snake-board-panel .panel-header { align-items: center; }
+
+.snake-board {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  width: max-content;
+  margin: 0 auto;
+}
+
+.snake-cell { background: var(--bg); }
+.snake-cell--body { background: rgba(0,212,180,0.45); }
+.snake-cell--head { background: var(--teal); }
+.snake-cell--food { background: var(--red); border-radius: 50%; }
+
+.snake-gameover {
+  text-align: center;
+  color: var(--red);
+  font-size: 0.85rem;
+  margin: 12px 0 0;
+}
+
+.snake-controls {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.snake-lastmove {
+  text-align: center;
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--dim);
+  margin: 10px 0 0;
+}
+
+.snake-settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.snake-pace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--dim);
+  margin-bottom: 8px;
+}
+.snake-pace-row input[type="range"] { flex: 1; accent-color: var(--teal); }
+.snake-pace-row:last-child { margin-bottom: 0; }
+
+.snake-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: "Fira Code", ui-monospace, monospace;
+}
+.snake-stat-row:last-child { border-bottom: none; }
+
+.snake-log-wrap { overflow-x: auto; }
+
+.snake-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.snake-log-table th, .snake-log-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.snake-log-table th {
+  color: var(--dim);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.snake-log-table tbody tr:hover { background: rgba(255,255,255,0.03); }
