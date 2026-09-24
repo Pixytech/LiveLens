@@ -9,14 +9,16 @@ function colorForClass(cls: string) {
 }
 
 interface Props {
-  videoCanvas: React.ReactNode;
+  // Ref to the DOM node <VideoCanvas> gets portalled into (see AppTabs) —
+  // this component only owns the slot, not the video content itself.
+  feedRef: (node: HTMLDivElement | null) => void;
   tracked: TrackedObject[];
   modelReady: boolean;
   result: AnalyticsResult | null;
   pyodideReady: boolean;
 }
 
-export function DetectView({ videoCanvas, tracked, modelReady, result, pyodideReady }: Props) {
+export function DetectView({ feedRef, tracked, modelReady, result, pyodideReady }: Props) {
   const now     = Date.now();
   const counts  = result?.counts  ?? {};
   const dwell   = result?.dwellMs ?? {};
@@ -36,8 +38,7 @@ export function DetectView({ videoCanvas, tracked, modelReady, result, pyodideRe
 
       <div className="detect-grid">
         {/* Left — video feed */}
-        <div className="detect-feed">
-          {videoCanvas}
+        <div className="detect-feed" ref={feedRef}>
           {!modelReady && (
             <div className="feed-loading">Loading detection model…</div>
           )}

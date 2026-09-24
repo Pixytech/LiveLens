@@ -14,7 +14,7 @@ interface SpeechRecognition extends EventTarget {
   stop(): void;
 }
 
-declare var SpeechRecognition: { new(): SpeechRecognition };
+declare const SpeechRecognition: { new(): SpeechRecognition };
 
 interface Window {
   SpeechRecognition?: typeof SpeechRecognition;

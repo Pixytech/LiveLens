@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { TrackedObject } from "../lib/tracker";
 import { AnalyticsResult } from "../hooks/usePyodideAnalytics";
 import { VideoCanvas } from "./VideoCanvas";
@@ -32,6 +34,15 @@ export type { TabId };
 export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, activeTab, onTabChange }: Props) {
   const active = activeTab;
 
+  // Where the persistent <video>/<canvas> pair currently lives: DetectView's
+  // feed slot when Detect is active, or an invisible off-screen slot on every
+  // other tab. Tracked as plain DOM nodes (via callback refs) rather than
+  // conditionally rendering <VideoCanvas> itself in each branch below — see
+  // the portal comment further down for why that distinction matters.
+  const [feedAnchor, setFeedAnchor] = useState<HTMLDivElement | null>(null);
+  const [offscreenAnchor, setOffscreenAnchor] = useState<HTMLDivElement | null>(null);
+  const portalTarget = active === "detect" ? feedAnchor : offscreenAnchor;
+
   const switchTab = (id: TabId) => {
     onTabChange(id);
     localStorage.setItem("active_tab", id);
@@ -53,13 +64,23 @@ export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, a
         ))}
       </div>
 
-      {/* VideoCanvas always in the DOM so the detection loop never stops.
-          Off the Detect tab it is fixed to a 1×1 invisible region — the
-          <video> element keeps playing and useObjectDetection keeps reading
-          frames; only the rendered output changes. */}
+      {/* <VideoCanvas> is rendered exactly once, at this fixed position in the
+          tree, so the underlying <video> element (and the camera stream's
+          srcObject attached to it) is created only once for the app's whole
+          lifetime. It's then portalled into whichever anchor div is currently
+          in the DOM below — DetectView's feed slot, or the off-screen slot —
+          instead of being placed directly inside the tab-switching branches.
+          Putting it directly in those branches would put it at a different
+          tree position on every switch, which React treats as a full
+          unmount/remount: a brand-new <video> element with no srcObject, i.e.
+          a blank feed and a dead detection loop the moment you leave and
+          return to the Detect tab. Portalling keeps the same DOM node alive
+          and just moves it. */}
+      {portalTarget && createPortal(<VideoCanvas videoRef={videoRef} tracked={tracked} />, portalTarget)}
+
       {active === "detect" ? (
         <DetectView
-          videoCanvas={<VideoCanvas videoRef={videoRef} tracked={tracked} />}
+          feedRef={setFeedAnchor}
           tracked={tracked}
           modelReady={modelReady}
           result={result}
@@ -67,9 +88,7 @@ export function AppTabs({ videoRef, tracked, result, pyodideReady, modelReady, a
         />
       ) : (
         <>
-          <div className="video-offscreen">
-            <VideoCanvas videoRef={videoRef} tracked={tracked} />
-          </div>
+          <div className="video-offscreen" ref={setOffscreenAnchor} />
           {active === "speech"  && <SpeechView />}
           {active === "chat"    && <ChatView />}
           {active === "monitor" && <MonitorView />}

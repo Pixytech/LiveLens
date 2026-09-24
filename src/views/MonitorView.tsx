@@ -129,7 +129,7 @@ export function MonitorView() {
     const area = video ? videoRenderArea(bounds, video) : null;
     if (!area) return;
 
-    let rect: NormRect | null = null;
+    let rect: NormRect | null;
     if (dragStartRef.current && dragCurrRef.current) {
       const { nx: x1, ny: y1 } = dragStartRef.current;
       const { nx: x2, ny: y2 } = dragCurrRef.current;

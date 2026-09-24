@@ -64,7 +64,6 @@ self.addEventListener('message', async ({ data }: MessageEvent<InMsg>) => {
       const streamer = new TextStreamer(tokenizer, {
         skip_prompt: true,
         skip_special_tokens: true,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         callback_function: (chunk: string) => { tokenCount++; text += chunk; },
       });
 
