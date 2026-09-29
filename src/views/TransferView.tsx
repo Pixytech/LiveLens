@@ -7,6 +7,7 @@ import {
   imageDataToStream, packFile, peekMeta, recoverFile, streamToImageData, toHex, unpackStream,
   WrongPassphraseError, type PackedMeta,
 } from "../transfer/fileCodec";
+import { encodeSymbol, FountainDecoder, splitChunks } from "../transfer/fountain";
 import type { DecodeRequest, DecodeResponse } from "../transfer/decoder.worker";
 
 // Shared helpers
@@ -64,7 +65,9 @@ export function TransferView() {
         result as a grid of black and white cells. Think of it as a live QR code: instead of one static image
         holding a few hundred bytes, the grid changes frame by frame and carries a whole file. The decoder, another instance of this app, watches that grid with
         a phone camera or screen capture, finds the corner markers, reads each cell, fixes any errors and checks the SHA-256 hash, so
-        the rebuilt file is identical to the original. The idea works in both directions if each side runs an
+        the rebuilt file is identical to the original. Small alignment squares spread across the grid let the
+        decoder follow curved screens and lens distortion, and after the first pass every frame is a fresh mix of
+        the file (a fountain code), so any frames the camera happens to catch are useful. The idea works in both directions if each side runs an
         encoder and a decoder, and it is not limited to vision: sound, light or any other signal one device can
         produce and the other can sense could carry the same data. Everything runs locally in the browser.
       </details>
@@ -107,12 +110,10 @@ function SendPanel() {
   const [fps, setFps] = useState(() => Number(localStorage.getItem("xfer_fps")) || 4);
   const [running, setRunning] = useState(false);
   const [frameIdx, setFrameIdx] = useState(0);
-  const [loops, setLoops] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [box, setBox] = useState({ w: 1280, h: 720 }); // device pixels available
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const sessionRef = useRef((Math.random() * 0xffffffff) >>> 0);
 
   useEffect(() => { localStorage.setItem("xfer_cell", String(cellPx)); }, [cellPx]);
   useEffect(() => { localStorage.setItem("xfer_bpc", String(bpc)); }, [bpc]);
@@ -149,8 +150,16 @@ function SendPanel() {
   }, [box, cellPx, bpc, parity]);
   const layout = layoutInfo.layout;
 
-  const frameCount = prepared && layout ? Math.max(1, Math.ceil(prepared.stream.length / layout.payloadCapacity)) : 0;
-  useEffect(() => { setFrameIdx((i) => (frameCount ? i % frameCount : 0)); }, [frameCount]);
+  // Split the stream into fountain chunks for the current layout. A new
+  // session id tells the decoder to start over whenever the chunks change.
+  const coded = useMemo(() => {
+    if (!prepared || !layout) return null;
+    const chunkSize = Math.floor(layout.payloadCapacity / 4) * 4;
+    const chunks = splitChunks(prepared.stream, chunkSize);
+    return { chunks, chunkSize, session: (Math.random() * 0xffffffff) >>> 0 };
+  }, [prepared, layout]);
+  const frameCount = coded ? coded.chunks.length : 0;
+  useEffect(() => { setFrameIdx(0); }, [coded]);
 
   // File handling
   const prepare = useCallback(async (file: File, pass: string) => {
@@ -159,9 +168,7 @@ function SendPanel() {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const stream = await packFile(bytes, file.name, pass || undefined);
       const meta = peekMeta(stream)!;
-      sessionRef.current = (Math.random() * 0xffffffff) >>> 0;
       setPrepared({ file, bytes, stream, sha: toHex(meta.sha256), encrypted: !!pass });
-      setFrameIdx(0); setLoops(0);
     } catch (e) {
       setError(`Could not read file: ${(e as Error).message}`);
     }
@@ -184,7 +191,7 @@ function SendPanel() {
   // Drawing
   const draw = useCallback((idx: number) => {
     const canvas = canvasRef.current;
-    if (!canvas || !layout || !prepared) return;
+    if (!canvas || !layout || !prepared || !coded) return;
     const { cols, rows } = layout;
     const W = (cols + QUIET * 2) * cellPx, H = (rows + QUIET * 2) * cellPx;
     if (canvas.width !== W || canvas.height !== H) {
@@ -194,18 +201,17 @@ function SendPanel() {
     canvas.style.width = `${W / dpr}px`;
     canvas.style.height = `${H / dpr}px`;
 
-    const P = layout.payloadCapacity;
-    const count = Math.max(1, Math.ceil(prepared.stream.length / P));
-    const i = idx % count;
-    const payload = prepared.stream.subarray(i * P, Math.min(prepared.stream.length, (i + 1) * P));
+    // Frames 0..K-1 carry the chunks directly, later frames carry mixes of
+    // them (fountain code), so the index just keeps counting up.
     const grid = encodeFrame(layout, {
-      session: sessionRef.current, index: i, count, chunkSize: P, streamLen: prepared.stream.length,
-    }, payload);
+      session: coded.session, index: idx, count: coded.chunks.length,
+      chunkSize: coded.chunkSize, streamLen: prepared.stream.length,
+    }, encodeSymbol(coded.chunks, idx));
     const ctx = canvas.getContext("2d")!;
     const img = ctx.createImageData(W, H);
     renderGrid(grid, cols, rows, cellPx, img);
     ctx.putImageData(img, 0, 0);
-  }, [layout, prepared, cellPx]);
+  }, [layout, prepared, cellPx, coded]);
 
   // Redraw the current frame whenever geometry/data change.
   useEffect(() => { draw(frameIdx); }, [draw]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -215,8 +221,7 @@ function SendPanel() {
     if (!running || !frameCount) return;
     let i = frameIdx;
     const t = setInterval(() => {
-      i = (i + 1) % frameCount;
-      if (i === 0) setLoops((l) => l + 1);
+      i = (i + 1) >>> 0;
       setFrameIdx(i);
       draw(i);
     }, 1000 / fps);
@@ -238,7 +243,8 @@ function SendPanel() {
     if (blob) downloadBytes(new Uint8Array(await blob.arrayBuffer()), `${prepared.file.name}.png`, "image/png");
   };
 
-  const loopSecs = frameCount / fps;
+  const minSecs = frameCount / fps;
+  const cameraPreset = () => { setCellPx(8); setBpc(1); setParity(64); setFps(3); };
   const eccHint = ECC_LEVELS.find((l) => l.parity === parity)?.hint;
 
   return (
@@ -274,7 +280,7 @@ function SendPanel() {
           {prepared && (
             <div className="xfer-bar">
               <span className="xfer-frame-badge">
-                Frame {frameIdx + 1} of {frameCount}{loops > 0 ? `, loop ${loops + 1}` : ""}
+                Frame {frameIdx + 1}, file needs {frameCount}
               </span>
               <span style={{ flex: 1 }} />
               {canFullscreen && (
@@ -293,8 +299,9 @@ function SendPanel() {
         {layoutInfo.err && <p className="monitor-error">{layoutInfo.err}</p>}
         {error && <p className="monitor-error">{error}</p>}
         <p className="monitor-selection-hint">
-          Tip: go full screen for the largest, sharpest image. Frames play in a loop and the decoder
-          collects frames in any order and fills gaps on the next loop.
+          Tip: go full screen for the largest, sharpest image. Frames never repeat: after the first pass every
+          frame is a new mix of the file, so the decoder can use whichever frames it catches and needs only
+          about as many as the file has chunks.
         </p>
       </div>
 
@@ -335,7 +342,13 @@ function SendPanel() {
         </div>
 
         <div className="panel" style={{ marginTop: 18 }}>
-          <div className="panel-header">Encoding</div>
+          <div className="panel-header">
+            Encoding
+            <button className="monitor-ctrl-btn xfer-inline-btn" onClick={cameraPreset}
+              title="8 px cells, black and white, high error correction, 3 fps">
+              Phone camera preset
+            </button>
+          </div>
           <div className="monitor-field">
             <label className="chat-settings-label">Cell size</label>
             <select className="speech-select" value={cellPx} onChange={(e) => setCellPx(Number(e.target.value))}>
@@ -367,7 +380,7 @@ function SendPanel() {
               <span>Grid</span><b>{layout.cols} x {layout.rows} cells</b>
               <span>Per frame</span><b>{fmtBytes(layout.payloadCapacity)}</b>
               {prepared && <><span>Frames</span><b>{frameCount}</b></>}
-              {prepared && <><span>One loop</span><b>{loopSecs < 60 ? `${loopSecs.toFixed(1)} s` : `${(loopSecs / 60).toFixed(1)} min`}</b></>}
+              {prepared && <><span>At best</span><b>{minSecs < 60 ? `${minSecs.toFixed(1)} s` : `${(minSecs / 60).toFixed(1)} min`}</b></>}
               <span>Throughput</span><b>{fmtBytes(Math.round(layout.payloadCapacity * fps))}/s</b>
             </div>
           )}
@@ -381,11 +394,13 @@ function SendPanel() {
 
 interface Transfer {
   session: number;
-  count: number;
+  count: number;              // chunks the file was split into (K)
   chunkSize: number;
   streamLen: number;
-  chunks: (Uint8Array | undefined)[];
-  received: number;
+  dec: FountainDecoder | null;
+  stream: Uint8Array | null;  // set once all chunks are recovered
+  received: number;           // useful frames so far (decoder rank)
+  seen: number;               // frames read, useful or not
   meta: PackedMeta | null;
   startedAt: number;
 }
@@ -408,6 +423,7 @@ function ReceivePanel() {
   const xferRef = useRef<Transfer | null>(null);
   const doneRef = useRef(false);
   const autoSaveRef = useRef(true);
+  const lastLockRef = useRef(0);
 
   const [hasStream, setHasStream] = useState(false);
   const [source, setSource] = useState<Source>("camera");
@@ -432,9 +448,13 @@ function ReceivePanel() {
 
   // Assemble / finish
   const finish = useCallback(async (x: Transfer, pass?: string) => {
-    const stream = new Uint8Array(x.streamLen);
-    x.chunks.forEach((c, i) => c && stream.set(c, i * x.chunkSize));
-    const u = unpackStream(stream);
+    if (!x.stream && x.dec?.done) {
+      const all = new Uint8Array(x.count * x.chunkSize);
+      x.dec.solve().forEach((c, i) => all.set(c, i * x.chunkSize));
+      x.stream = all.subarray(0, x.streamLen);
+    }
+    if (!x.stream) return;
+    const u = unpackStream(x.stream);
     if (!u) { addLog("Error: stream header invalid"); return; }
     try {
       const bytes = await recoverFile(u, pass);
@@ -461,22 +481,24 @@ function ReceivePanel() {
     if (!x || x.session !== f.session) {
       x = {
         session: f.session, count: f.count, chunkSize: f.chunkSize, streamLen: f.streamLen,
-        chunks: new Array(f.count), received: 0, meta: null, startedAt: Date.now(),
+        dec: new FountainDecoder(f.count, f.chunkSize), stream: null,
+        received: 0, seen: 0, meta: null, startedAt: Date.now(),
       };
       xferRef.current = x;
       doneRef.current = false;
       setDone(null); setNeedPass(false); setPassError(null);
       addLog(`New sequence ${f.session.toString(16)}: ${f.count} frames, ${fmtBytes(f.streamLen)}`);
     }
-    if (doneRef.current || x.chunks[f.index]) return;
-    x.chunks[f.index] = f.payload;
-    x.received++;
+    if (doneRef.current || x.stream || !x.dec) return;
+    x.seen++;
+    x.dec.add(f.index, f.payload);
+    x.received = x.dec.rank;
     if (f.index === 0 && !x.meta) {
       x.meta = peekMeta(f.payload);
       if (x.meta) addLog(`File: ${x.meta.name} (${fmtBytes(x.meta.size)})${x.meta.encrypted ? ", encrypted" : ""}`);
     }
     setXfer({ ...x });
-    if (x.received === x.count) finish(x);
+    if (x.dec.done) finish(x);
   }, [addLog, finish]);
 
   // Worker
@@ -487,14 +509,20 @@ function ReceivePanel() {
     w.onmessage = (e: MessageEvent<DecodeResponse>) => {
       busyRef.current = false;
       const { result, ms } = e.data;
-      drawOverlay(result.finders);
+      // Only draw the outline once the format header has been read, so the
+      // box does not flicker over look-alike patterns; keep it briefly after.
+      const now = performance.now();
+      if (result.layout) { lastLockRef.current = now; drawOverlay(result.finders); }
+      else if (now - lastLockRef.current > 800) drawOverlay(null);
       setStats((s) => ({
         scanned: s.scanned + 1,
         decoded: s.decoded + (result.frame ? 1 : 0),
         corrected: s.corrected + (result.frame ? result.corrected : 0),
         lastMs: Math.round(ms),
         lastError: result.frame ? "" : result.error ?? "",
-        grid: result.layout ? `grid ${result.layout.cols} x ${result.layout.rows}, ${result.layout.bpc} bit per cell, ${result.layout.cellPx.toFixed(2)} px per cell` : s.grid,
+        grid: result.layout
+          ? `grid ${result.layout.cols} x ${result.layout.rows}, ${result.layout.bpc} bit per cell, ${result.layout.cellPx.toFixed(2)} px per cell, alignment ${result.layout.aligned} of ${result.layout.patterns}`
+          : s.grid,
       }));
       if (result.frame) acceptFrame(result.frame);
     };
@@ -614,7 +642,10 @@ function ReceivePanel() {
         const u = unpackStream(stream);
         if (u) {
           addLog(`Image ${file.name}: direct PNG, ${fmtBytes(stream.length)} stream`);
-          const x: Transfer = { session: 0, count: 1, chunkSize: stream.length, streamLen: stream.length, chunks: [stream], received: 1, meta: peekMeta(stream), startedAt: Date.now() };
+          const x: Transfer = {
+            session: 0, count: 1, chunkSize: stream.length, streamLen: stream.length, dec: null, stream,
+            received: 1, seen: 1, meta: peekMeta(stream), startedAt: Date.now(),
+          };
           xferRef.current = x; doneRef.current = false; setDone(null); setXfer({ ...x });
           await finish(x);
           return;
@@ -717,12 +748,9 @@ function ReceivePanel() {
                 <div className="bar-track" style={{ marginTop: 10 }}>
                   <div className="bar-fill" style={{ width: `${pct}%` }} />
                 </div>
-                <p className="monitor-progress-label">{pct}%, {xfer.received} of {xfer.count} frames</p>
-                <div className="xfer-frames" aria-label="frames received">
-                  {Array.from({ length: xfer.count }, (_, i) => (
-                    <span key={i} className={xfer.chunks[i] ? "xfer-frame xfer-frame--ok" : "xfer-frame"} title={`frame ${i + 1}`} />
-                  ))}
-                </div>
+                <p className="monitor-progress-label">
+                  {pct}%, {xfer.received} of {xfer.count} frames needed ({xfer.seen} read)
+                </p>
               </>
             )}
 

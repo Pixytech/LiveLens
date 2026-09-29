@@ -6,6 +6,9 @@
 //   - rows 0-15 hold the finders and a small format header next to the
 //     top-left finder: grid size, bits per cell and parity level, protected by
 //     its own Reed-Solomon code, so the decoder adapts to the encoder settings
+//   - a lattice of small alignment patterns (5x5, like QR) spread across the
+//     grid lets the decoder correct curved screens and lens distortion patch
+//     by patch
 //   - every other cell carries data: whitened, Reed-Solomon protected and
 //     byte-interleaved across blocks
 
@@ -18,19 +21,21 @@ const FMOD = 2;                  // cells per finder module
 const FINDER = 7 * FMOD;         // finder side, cells (14)
 const RESERVED = FINDER + FMOD;  // finder + separator (16)
 const FC = FINDER / 2;           // finder centre offset from grid edge (7)
-const HDR_ROWS = 6;              // header module rows (each module 2x2 cells)
+const HDR_ROWS = 12;             // header rows (one bit per cell)
 const HDR_ROW0 = 2;              // first cell row of the header
 const HDR_COL0 = RESERVED;       // first cell column of the header
-const HDR_NSYM = 8;
+const HDR_NSYM = 12;
 const HDR_LEN = 9;               // bytes before RS parity
 const HDR_BITS = (HDR_LEN + HDR_NSYM) * 8;
 const HDR_MODCOLS = Math.ceil(HDR_BITS / HDR_ROWS);
 
-export const MIN_COLS = RESERVED * 2 + HDR_MODCOLS * 2 + 4;
+export const MIN_COLS = RESERVED * 2 + HDR_MODCOLS + 24;
 export const MIN_ROWS = RESERVED * 2 + 24;
 
+const ALIGN_STEP = 28;           // target spacing of alignment patterns
+
 const FRAME_MAGIC = [0x4c, 0x46]; // "LF"
-const FRAME_HDR = 26;
+const FRAME_HDR = 28;
 
 // Small utilities
 
@@ -87,6 +92,31 @@ export interface Layout {
   blocks: { n: number; k: number }[];
   msgCapacity: number;         // sum of k - bytes before parity
   payloadCapacity: number;     // msgCapacity - frame header
+  nodesX: number[];            // alignment lattice, cell coordinates of
+  nodesY: number[];            //   node centres along each axis
+  patterns: boolean[][];       // [i][j]: an alignment pattern is drawn there
+}
+
+/** Node positions along one axis: the first and last sit next to the finder
+ *  centres, the rest are spaced about ALIGN_STEP cells apart. */
+function latticeAxis(n: number): number[] {
+  const a = FC + 0.5, b = n - FC - 0.5;
+  const k = Math.max(1, Math.round((b - a) / ALIGN_STEP));
+  return Array.from({ length: k + 1 }, (_, i) => (i === 0 ? a : i === k ? b : Math.floor(a + ((b - a) * i) / k) + 0.5));
+}
+
+/** True when a 5x5 pattern centred on cell (c, r) stays clear of the finder
+ *  zones and the format header. */
+function patternFits(c: number, r: number, cols: number, rows: number): boolean {
+  const c0 = c - 2, c1 = c + 2, r0 = r - 2, r1 = r + 2;
+  if (c0 < 0 || r0 < 0 || c1 >= cols || r1 >= rows) return false;
+  const inZone = (zc0: number, zr0: number, zc1: number, zr1: number) => !(c1 < zc0 || c0 > zc1 || r1 < zr0 || r0 > zr1);
+  if (inZone(0, 0, RESERVED - 1, RESERVED - 1)) return false;
+  if (inZone(cols - RESERVED, 0, cols - 1, RESERVED - 1)) return false;
+  if (inZone(0, rows - RESERVED, RESERVED - 1, rows - 1)) return false;
+  if (inZone(cols - RESERVED, rows - RESERVED, cols - 1, rows - 1)) return false;
+  if (inZone(HDR_COL0, 0, HDR_COL0 + HDR_MODCOLS, RESERVED - 1)) return false;
+  return true;
 }
 
 const layoutCache = new Map<string, Layout>();
@@ -97,10 +127,19 @@ export function makeLayout(cols: number, rows: number, bpc: 1 | 2, parity: numbe
   if (hit) return hit;
   if (cols < MIN_COLS || rows < MIN_ROWS) throw new Error(`Grid too small (min ${MIN_COLS}x${MIN_ROWS})`);
 
+  const nodesX = latticeAxis(cols), nodesY = latticeAxis(rows);
+  const patterns = nodesX.map((x) => nodesY.map((y) => patternFits(x - 0.5, y - 0.5, cols, rows)));
+  const used = new Uint8Array(cols * rows);
+  nodesX.forEach((x, i) => nodesY.forEach((y, j) => {
+    if (!patterns[i][j]) return;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) used[(y - 0.5 + dy) * cols + (x - 0.5 + dx)] = 1;
+  }));
+
   const cells: number[] = [];
   for (let r = RESERVED; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (r >= rows - RESERVED && (c < RESERVED || c >= cols - RESERVED)) continue;
+      if (used[r * cols + c]) continue;
       cells.push(r * cols + c);
     }
   }
@@ -120,6 +159,7 @@ export function makeLayout(cols: number, rows: number, bpc: 1 | 2, parity: numbe
     dataCells: Int32Array.from(cells),
     capacityBytes, blocks, msgCapacity,
     payloadCapacity: msgCapacity - FRAME_HDR,
+    nodesX, nodesY, patterns,
   };
   layoutCache.set(key, layout);
   return layout;
@@ -154,7 +194,7 @@ export interface FrameInfo {
   session: number;
   index: number;
   count: number;
-  chunkSize: number;   // payload bytes per full frame (offset = index x chunkSize)
+  chunkSize: number;   // bytes per chunk (every frame carries one coded chunk)
   streamLen: number;   // total bytes being transferred
 }
 
@@ -170,12 +210,12 @@ export function encodeFrame(layout: Layout, info: FrameInfo, payload: Uint8Array
   const dv = new DataView(msg.buffer);
   msg[0] = FRAME_MAGIC[0]; msg[1] = FRAME_MAGIC[1];
   dv.setUint32(2, info.session);
-  dv.setUint16(6, info.index);
-  dv.setUint16(8, info.count);
-  dv.setUint32(10, info.chunkSize);
-  dv.setUint32(14, info.streamLen);
-  dv.setUint32(18, payload.length);
-  dv.setUint32(22, crc32(payload));
+  dv.setUint32(6, info.index);
+  dv.setUint16(10, info.count);
+  dv.setUint32(12, info.chunkSize);
+  dv.setUint32(16, info.streamLen);
+  dv.setUint32(20, payload.length);
+  dv.setUint32(24, crc32(payload));
   msg.set(payload, FRAME_HDR);
 
   // 2. RS-encode each block and interleave into the stream
@@ -219,6 +259,13 @@ function paintFixed(grid: Uint8Array, layout: Layout) {
         set(c0 + mx * FMOD + dx, r0 + my * FMOD + dy, dark ? 0 : 255);
     }
   };
+  layout.nodesX.forEach((x, i) => layout.nodesY.forEach((y, j) => {
+    if (!layout.patterns[i][j]) return;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const ring = Math.max(Math.abs(dx), Math.abs(dy));
+      set(x - 0.5 + dx, y - 0.5 + dy, ring === 1 ? 255 : 0);
+    }
+  }));
   finder(0, 0);
   finder(cols - FINDER, 0);
   finder(0, rows - FINDER);
@@ -227,7 +274,7 @@ function paintFixed(grid: Uint8Array, layout: Layout) {
   // Format header
   const hdr = new Uint8Array(HDR_LEN);
   const dv = new DataView(hdr.buffer);
-  hdr[0] = 0x4c; hdr[1] = 0x54; hdr[2] = 1; // "LT" v1
+  hdr[0] = 0x4c; hdr[1] = 0x54; hdr[2] = 2; // "LT" v2
   dv.setUint16(3, cols);
   dv.setUint16(5, rows);
   hdr[7] = layout.bpc;
@@ -236,9 +283,7 @@ function paintFixed(grid: Uint8Array, layout: Layout) {
   for (let i = 0; i < HDR_BITS; i++) {
     const bitv = (cw[i >> 3] >> (7 - (i & 7))) & 1;
     const mr = i % HDR_ROWS, mc = Math.floor(i / HDR_ROWS);
-    const c = HDR_COL0 + mc * 2, r = HDR_ROW0 + mr * 2;
-    const v = bitv ? 0 : 255;
-    set(c, r, v); set(c + 1, r, v); set(c, r + 1, v); set(c + 1, r + 1, v);
+    set(HDR_COL0 + mc, HDR_ROW0 + mr, bitv ? 0 : 255);
   }
 }
 
@@ -278,7 +323,7 @@ export interface Finder extends Pt { m: number; hits: number; }
 
 export interface DecodeResult {
   finders: Finder[] | null;           // TL, TR, BL, BR when found
-  layout?: { cols: number; rows: number; bpc: number; parity: number; cellPx: number };
+  layout?: { cols: number; rows: number; bpc: number; parity: number; cellPx: number; aligned: number; patterns: number };
   frame?: FrameInfo & { payload: Uint8Array };
   corrected: number;                  // bytes repaired by Reed-Solomon
   failedBlocks: number;
@@ -587,13 +632,13 @@ function readHeader(g: Uint8Array, w: number, h: number, q: Finder[], cols: numb
   const cw = new Uint8Array(HDR_BITS / 8);
   for (let i = 0; i < HDR_BITS; i++) {
     const mr = i % HDR_ROWS, mc = Math.floor(i / HDR_ROWS);
-    const p = map(HDR_COL0 + mc * 2 + 1, HDR_ROW0 + mr * 2 + 1);
+    const p = map(HDR_COL0 + mc + 0.5, HDR_ROW0 + mr + 0.5);
     if (bilinearSample(g, w, h, p.x, p.y) < mid) cw[i >> 3] |= 0x80 >> (i & 7);
   }
   const res = rsDecode(cw, HDR_NSYM);
   if (!res) return null;
   const d = res.data;
-  if (d[0] !== 0x4c || d[1] !== 0x54 || d[2] !== 1) return null;
+  if (d[0] !== 0x4c || d[1] !== 0x54 || d[2] !== 2) return null;
   const dv = new DataView(d.buffer, d.byteOffset);
   const hc = dv.getUint16(3), hr = dv.getUint16(5), bpc = d[7], parity = d[8];
   if ((bpc !== 1 && bpc !== 2) || hc < MIN_COLS || hr < MIN_ROWS) return null;
@@ -630,11 +675,27 @@ function findHeader(g: Uint8Array, w: number, h: number, q: Finder[]) {
   }
 }
 
-export function decodeImage(g: Uint8Array, w: number, h: number): DecodeResult {
+/** hint: the finders from the last successful decode. Quads close to it
+ *  are tried first, which keeps a hand-held camera locked on the grid
+ *  instead of jumping to look-alike patterns in the data. */
+export function decodeImage(g: Uint8Array, w: number, h: number, hint?: Finder[] | null): DecodeResult {
   const I = integral(g, w, h);
   const cands = findFinders(g, w, h, I);
   const quads = pickQuads(cands);
   if (!quads.length) return { finders: null, corrected: 0, failedBlocks: 0, error: "No code found" };
+
+  if (hint) {
+    const size = dist(hint[0], hint[3]);
+    const near = (p: Finder[]) => Math.min(...[0, 1, 2, 3].map((rot) => {
+      let d = 0;
+      for (let k = 0; k < 4; k++) {
+        const hp = [hint[0], hint[1], hint[3], hint[2]][k]; // clockwise order
+        d += dist(p[(rot + k) % 4], hp);
+      }
+      return d;
+    })) / size;
+    quads.sort((a, b) => near(a) - near(b));
+  }
 
   for (const p of quads) {
     // p is clockwise: try each corner as the grid's top-left, so the image
@@ -645,8 +706,13 @@ export function decodeImage(g: Uint8Array, w: number, h: number): DecodeResult {
       const hdr = findHeader(g, w, h, q);
       if (!hdr) continue;
       const layout = makeLayout(hdr.cols, hdr.rows, hdr.bpc, hdr.parity);
-      const lay = { cols: hdr.cols, rows: hdr.rows, bpc: hdr.bpc, parity: hdr.parity, cellPx: dist(q[0], q[1]) / (hdr.cols - 2 * FC) };
-      const r = decodeData(g, w, h, q, layout, I);
+      const warp = buildWarp(g, w, h, q, layout);
+      const lay = {
+        cols: hdr.cols, rows: hdr.rows, bpc: hdr.bpc, parity: hdr.parity,
+        cellPx: dist(q[0], q[1]) / (hdr.cols - 2 * FC),
+        aligned: warp.found, patterns: warp.total,
+      };
+      const r = decodeData(g, w, h, q, layout, I, warp.map);
       return { finders: q, layout: lay, ...r };
     }
   }
@@ -654,10 +720,115 @@ export function decodeImage(g: Uint8Array, w: number, h: number): DecodeResult {
   return { finders: [p[0], p[1], p[3], p[2]], corrected: 0, failedBlocks: 0, error: "Format header unreadable" };
 }
 
-function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: Layout, I: Float64Array) {
+/** Refine the finder homography with the alignment lattice. Each pattern is
+ *  searched for near where the homography (plus the drift already measured
+ *  at neighbouring patterns) predicts it; the measured drift is then
+ *  interpolated across the grid. This follows curved screens and lens
+ *  distortion that a single perspective transform cannot. */
+function buildWarp(g: Uint8Array, w: number, h: number, q: Finder[], layout: Layout) {
+  const { cols, rows, nodesX: X, nodesY: Y, patterns } = layout;
+  const H = makeMapper(q, cols, rows);
+  const cal = calibrate(g, w, h, q, H, cols, rows);
+  const contrast = cal.reduce((a, c) => a + (c.white - c.black), 0) / 4;
+  const nx = X.length, ny = Y.length;
+  const rx: number[][] = X.map(() => Y.map(() => 0));
+  const ry: number[][] = X.map(() => Y.map(() => 0));
+  const known: boolean[][] = X.map(() => Y.map(() => false));
+  for (const [i, j] of [[0, 0], [nx - 1, 0], [0, ny - 1], [nx - 1, ny - 1]]) known[i][j] = true;
+
+  const neighbourDrift = (i: number, j: number) => {
+    let sx = 0, sy = 0, n = 0;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      const ii = i + a, jj = j + b;
+      if ((a || b) && ii >= 0 && jj >= 0 && ii < nx && jj < ny && known[ii][jj]) { sx += rx[ii][jj]; sy += ry[ii][jj]; n++; }
+    }
+    return n ? { x: sx / n, y: sy / n, n } : null;
+  };
+
+  // Visit nodes outward from the corners so each search starts from a
+  // prediction that already includes nearby drift.
+  const order: [number, number][] = [];
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) if (!known[i][j]) order.push([i, j]);
+  const cornerDist = (i: number, j: number) => Math.min(i, nx - 1 - i) + Math.min(j, ny - 1 - j);
+  order.sort((a, b) => cornerDist(a[0], a[1]) - cornerDist(b[0], b[1]));
+
+  let found = 0, total = 0;
+  for (const [i, j] of order) {
+    if (!patterns[i][j]) continue;
+    total++;
+    const d = neighbourDrift(i, j) ?? { x: 0, y: 0 };
+    const base = H(X[i], Y[j]);
+    const ex = H(X[i] + 1, Y[j]), ey = H(X[i], Y[j] + 1);
+    const ux = { x: ex.x - base.x, y: ex.y - base.y }, uy = { x: ey.x - base.x, y: ey.y - base.y };
+    const hit = searchPattern(g, w, h, base.x + d.x, base.y + d.y, ux, uy, contrast);
+    if (hit) {
+      rx[i][j] = hit.x - base.x; ry[i][j] = hit.y - base.y;
+      known[i][j] = true;
+      found++;
+    }
+  }
+  // Fill nodes without a measurement from their neighbours.
+  for (let pass = 0; pass < 4; pass++) {
+    for (const [i, j] of order) {
+      if (known[i][j]) continue;
+      const d = neighbourDrift(i, j);
+      if (d) { rx[i][j] = d.x; ry[i][j] = d.y; if (pass === 3 || d.n >= 2) known[i][j] = true; }
+    }
+  }
+
+  const seg = (arr: number[], v: number) => {
+    let k = 0;
+    while (k < arr.length - 2 && v > arr[k + 1]) k++;
+    return { k, t: (v - arr[k]) / (arr[k + 1] - arr[k]) };
+  };
+  const map = (x: number, y: number): Pt => {
+    const p = H(x, y);
+    if (nx < 2 || ny < 2) return p;
+    const a = seg(X, x), b = seg(Y, y);
+    const u = Math.max(0, Math.min(1, a.t)), v = Math.max(0, Math.min(1, b.t));
+    const i = a.k, j = b.k;
+    const lerp = (m: number[][]) =>
+      (1 - u) * (1 - v) * m[i][j] + u * (1 - v) * m[i + 1][j] + (1 - u) * v * m[i][j + 1] + u * v * m[i + 1][j + 1];
+    return { x: p.x + lerp(rx), y: p.y + lerp(ry) };
+  };
+  return { map, found, total };
+}
+
+/** Find a 5x5 alignment pattern (dark ring, light ring, dark centre) near
+ *  (px, py). ux/uy are the image vectors of one cell step. */
+function searchPattern(g: Uint8Array, w: number, h: number, px: number, py: number, ux: Pt, uy: Pt, contrast: number): Pt | null {
+  const offsets: { dx: number; dy: number; dark: boolean }[] = [];
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    offsets.push({ dx, dy, dark: Math.max(Math.abs(dx), Math.abs(dy)) !== 1 });
+  }
+  const score = (cx: number, cy: number) => {
+    let dark = 0, light = 0;
+    for (const o of offsets) {
+      const v = bilinearSample(g, w, h, cx + o.dx * ux.x + o.dy * uy.x, cy + o.dx * ux.y + o.dy * uy.y);
+      if (o.dark) dark += v; else light += v;
+    }
+    return light / 8 - dark / 17;
+  };
+  let best = -Infinity, bx = px, by = py;
+  const R = 9, step = 1 / 3; // search +-3 cells in third-of-a-cell steps
+  for (let b = -R; b <= R; b++) for (let a = -R; a <= R; a++) {
+    const cx = px + (a * ux.x + b * uy.x) * step, cy = py + (a * ux.y + b * uy.y) * step;
+    const s = score(cx, cy);
+    if (s > best) { best = s; bx = cx; by = cy; }
+  }
+  // Refine around the best position.
+  const cx0 = bx, cy0 = by;
+  for (let b = -3; b <= 3; b++) for (let a = -3; a <= 3; a++) {
+    const cx = cx0 + (a * ux.x + b * uy.x) / 9, cy = cy0 + (a * ux.y + b * uy.y) / 9;
+    const s = score(cx, cy);
+    if (s > best) { best = s; bx = cx; by = cy; }
+  }
+  return best > contrast * 0.45 ? { x: bx, y: by } : null;
+}
+
+function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: Layout, I: Float64Array, map: Mapper) {
   const { cols, rows, bpc } = layout;
-  const map = makeMapper(q, cols, rows);
-  const cal = calibrate(g, w, h, q, map, cols, rows);
+  const cal = calibrate(g, w, h, q, makeMapper(q, cols, rows), cols, rows);
   const cellPx = dist(q[0], q[1]) / (cols - 2 * FC);
   const win = Math.max(3, cellPx * 5);
   const sx = cols - 2 * FC, sy = rows - 2 * FC;
@@ -712,13 +883,13 @@ function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: La
   const dv = new DataView(msg.buffer);
   const info: FrameInfo = {
     session: dv.getUint32(2),
-    index: dv.getUint16(6),
-    count: dv.getUint16(8),
-    chunkSize: dv.getUint32(10),
-    streamLen: dv.getUint32(14),
+    index: dv.getUint32(6),
+    count: dv.getUint16(10),
+    chunkSize: dv.getUint32(12),
+    streamLen: dv.getUint32(16),
   };
-  const len = dv.getUint32(18);
-  const crc = dv.getUint32(22);
+  const len = dv.getUint32(20);
+  const crc = dv.getUint32(24);
   if (len > layout.payloadCapacity) return { corrected, failedBlocks, error: "Bad payload length" };
   const payload = msg.slice(FRAME_HDR, FRAME_HDR + len);
   if (crc32(payload) !== crc) return { corrected, failedBlocks, error: "CRC mismatch" };

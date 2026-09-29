@@ -104,9 +104,16 @@ file -> "LLF1" | name | size | SHA-256 | body   (body is AES-GCM encrypted if a 
   codec (Berlekamp-Massey, Chien search, Forney). Interleaving puts
   neighbouring bytes on screen into different blocks, so a compression
   artefact costs each block only a byte or two.
+- **Alignment lattice**: small 5x5 alignment squares every ~28 cells. The
+  decoder finds each one near where the corner-based perspective transform
+  predicts it and interpolates the measured drift across the grid, so curved
+  monitors and lens distortion are corrected patch by patch.
+- **Fountain code**: the file is split into K chunks. Frames 0 to K-1 carry
+  them directly; every later frame carries a pseudo-random XOR mix of chunks
+  (`src/transfer/fountain.ts`). The decoder solves the system incrementally
+  and finishes after about K useful frames, whichever ones it catches, so a
+  missed frame never means waiting for it to come round again.
 - **Integrity**: each frame carries a CRC-32 and the whole file a SHA-256.
-  Frames can arrive in any order; the encoder loops until the decoder has
-  them all.
 
 Camera input: the decoder maps the four corner markers through a
 perspective transform (homography) and tries all four 90-degree
@@ -117,7 +124,7 @@ uneven lighting and glare. For a phone camera use 6 or 8 px cells and 2 to
 camera is the only live source.
 
 There is no fixed size limit. With 3 px cells on a 1280 x 720 area a frame
-holds about 9.5 KB, so 1 MB is about 108 frames, roughly 30 seconds at
+holds about 9.5 KB, so 1 MB needs about 110 frames, roughly 30 seconds at
 4 fps. Larger files work the same way and just take proportionally longer.
 
 ## Running locally
