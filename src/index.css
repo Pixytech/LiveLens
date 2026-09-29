@@ -1446,3 +1446,26 @@ body {
 }
 .xfer-arch[open] > summary::before { content: "-"; }
 .xfer-arch[open] > summary { margin-bottom: 4px; }
+
+.xfer-feed { max-height: 72vh; margin: 0 auto; width: 100%; }
+
+/* Small screens: whole app */
+@media (max-width: 640px) {
+  .app { padding: 16px 12px; }
+  .app-header { flex-wrap: wrap; gap: 8px; padding-bottom: 14px; margin-bottom: 16px; }
+  .app-header h1 { font-size: 1.5rem; }
+  .tab-bar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    margin-bottom: 16px;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-btn { white-space: nowrap; padding: 10px 12px 9px; font-size: 0.9rem; }
+  .panel { padding: 14px; }
+  .xfer-bar { flex-wrap: wrap; }
+  .xfer-row { flex-wrap: wrap; }
+  .xfer-kv { font-size: 0.8rem; }
+  .monitor-feed-controls { bottom: 6px; right: 6px; gap: 6px; }
+  .action-btn { padding: 9px 16px; }
+}

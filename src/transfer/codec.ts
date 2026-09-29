@@ -30,7 +30,7 @@ export const MIN_COLS = RESERVED * 2 + HDR_MODCOLS * 2 + 4;
 export const MIN_ROWS = RESERVED * 2 + 24;
 
 const FRAME_MAGIC = [0x4c, 0x46]; // "LF"
-export const FRAME_HDR = 26;
+const FRAME_HDR = 26;
 
 // Small utilities
 
@@ -44,7 +44,7 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-export function crc32(buf: Uint8Array): number {
+function crc32(buf: Uint8Array): number {
   let c = 0xffffffff;
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
@@ -263,10 +263,6 @@ export function renderGrid(grid: Uint8Array, cols: number, rows: number, cellPx:
   return img;
 }
 
-export function gridPixelSize(cols: number, rows: number, cellPx: number) {
-  return { width: (cols + QUIET * 2) * cellPx, height: (rows + QUIET * 2) * cellPx };
-}
-
 /** Largest grid that fits in a pixel box. */
 export function gridForPixels(width: number, height: number, cellPx: number) {
   return {
@@ -351,10 +347,50 @@ function crossCheck(bin: Uint8Array, w: number, h: number, x: number, y: number,
   return { m, centre: -a + center / 2 - 0.5 };
 }
 
-export function findFinders(g: Uint8Array, w: number, h: number): Finder[] {
+/** Integral image of the grey values, used for local (adaptive) thresholds. */
+function integral(g: Uint8Array, w: number, h: number): Float64Array {
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rowSum = 0;
+    const src = y * w, dst = (y + 1) * (w + 1), prev = y * (w + 1);
+    for (let x = 0; x < w; x++) {
+      rowSum += g[src + x];
+      I[dst + x + 1] = I[prev + x + 1] + rowSum;
+    }
+  }
+  return I;
+}
+
+function boxMean(I: Float64Array, w: number, h: number, cx: number, cy: number, r: number): number {
+  const x0 = Math.max(0, Math.round(cx - r)), x1 = Math.min(w, Math.round(cx + r));
+  const y0 = Math.max(0, Math.round(cy - r)), y1 = Math.min(h, Math.round(cy + r));
+  const W = w + 1;
+  const area = Math.max(1, (x1 - x0) * (y1 - y0));
+  return (I[y1 * W + x1] - I[y0 * W + x1] - I[y1 * W + x0] + I[y0 * W + x0]) / area;
+}
+
+/** Dark/light map. Uses a local mean (Bradley) so uneven lighting from a
+ *  camera does not hide the finders; falls back to the global Otsu level in
+ *  flat regions. */
+function binarize(g: Uint8Array, w: number, h: number, I: Float64Array): Uint8Array {
   const thr = otsu(g);
   const bin = new Uint8Array(w * h);
-  for (let i = 0; i < bin.length; i++) bin[i] = g[i] <= thr ? 1 : 0;
+  const r = Math.max(8, Math.round(Math.max(w, h) / 16));
+  const W = w + 1;
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      const mean = (I[y1 * W + x1] - I[y0 * W + x1] - I[y1 * W + x0] + I[y0 * W + x0]) / ((x1 - x0) * (y1 - y0));
+      const v = g[y * w + x];
+      bin[y * w + x] = v < mean * 0.85 || (v <= thr && mean - v > 8) ? 1 : 0;
+    }
+  }
+  return bin;
+}
+
+function findFinders(g: Uint8Array, w: number, h: number, I?: Float64Array): Finder[] {
+  const bin = binarize(g, w, h, I ?? integral(g, w, h));
 
   const clusters: { x: number; y: number; m: number; hits: number }[] = [];
   const runs = new Int32Array(w + 1);
@@ -399,58 +435,72 @@ export function findFinders(g: Uint8Array, w: number, h: number): Finder[] {
   return clusters.filter((c) => c.hits >= 2);
 }
 
-/** Choose finder quadruples (TL, TR, BL, BR) that form an axis-aligned
- *  rectangle, best first. If one corner is hidden (a cursor, a meeting-app
- *  overlay) it is synthesised from the other three and marked hits = 0. */
-function pickRectangles(cands: Finder[]): Finder[][] {
-  const top = cands.slice().sort((a, b) => b.hits - a.hits).slice(0, 16);
-  const similar = (a: Finder, b: Finder) => Math.max(a.m, b.m) / Math.min(a.m, b.m) < 1.5;
-  const valid = (tl: Finder, tr: Finder, bl: Finder, br: Finder) => {
-    const dx = tr.x - tl.x, dy = bl.y - tl.y;
-    if (dx <= 0 || dy <= 0 || dx / tl.m < 30 || dy / tl.m < 18) return 0;
-    if (!similar(tl, tr) || !similar(tl, bl) || !similar(tl, br)) return 0;
-    const tol = dx * 0.04 + tl.m * 3, tolY = dy * 0.04 + tl.m * 3;
-    if (Math.abs(tr.y - tl.y) > tol || Math.abs(bl.x - tl.x) > tolY) return 0;
-    if (Math.abs(br.x - (tr.x + bl.x - tl.x)) > tol || Math.abs(br.y - (tr.y + bl.y - tl.y)) > tolY) return 0;
-    return dx * dy;
-  };
-  const synth = (a: Finder, b: Finder, c: Finder): Finder => ({
-    x: a.x + b.x - c.x, y: a.y + b.y - c.y, m: (a.m + b.m + c.m) / 3, hits: 0,
-  });
+const cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 
-  const out: { q: Finder[]; score: number }[] = [];
+/** Candidate quadrilaterals of finders, returned clockwise (in image space)
+ *  starting from the corner nearest the top-left of the image. Perspective
+ *  and rotation are allowed, so a phone camera can look at the screen at an
+ *  angle. When only three finders are visible the fourth is extrapolated
+ *  and marked with hits = 0. */
+function pickQuads(cands: Finder[]): Finder[][] {
+  const top = cands.slice().sort((a, b) => b.hits - a.hits).slice(0, 16);
   const n = top.length;
-  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-    if (j === i) continue;
-    for (let k = 0; k < n; k++) {
-      if (k === i || k === j) continue;
-      const a = top[i], b = top[j], c = top[k];
-      // a,b,c as TL,TR,BL - then look for a real BR, else synthesise it.
-      let sc = valid(a, b, c, synth(b, c, a));
-      if (sc) {
-        let best: Finder | null = null;
-        for (let l = 0; l < n; l++) {
-          if (l === i || l === j || l === k) continue;
-          if (valid(a, b, c, top[l])) { best = top[l]; break; }
-        }
-        out.push(best ? { q: [a, b, c, best], score: sc * 2 } : { q: [a, b, c, synth(b, c, a)], score: sc });
-      }
-      // Missing TL (a=TR, b=BL, c=BR)
-      const tl = synth(a, b, c);
-      if ((sc = valid(tl, a, b, c))) out.push({ q: [tl, a, b, c], score: sc });
-      // Missing TR (a=TL, b=BL, c=BR)
-      const tr = synth(a, c, b);
-      if ((sc = valid(a, tr, b, c))) out.push({ q: [a, tr, b, c], score: sc });
-      // Missing BL (a=TL, b=TR, c=BR)
-      const bl = synth(a, c, b);
-      if ((sc = valid(a, b, bl, c))) out.push({ q: [a, b, bl, c], score: sc });
+  const out: { q: Finder[]; score: number }[] = [];
+
+  const order = (pts: Finder[]) => {
+    const cx = pts.reduce((a, p) => a + p.x, 0) / 4, cy = pts.reduce((a, p) => a + p.y, 0) / 4;
+    const s = pts.slice().sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    let k = 0;
+    for (let i = 1; i < 4; i++) if (s[i].x + s[i].y < s[k].x + s[k].y) k = i;
+    return [s[k], s[(k + 1) % 4], s[(k + 2) % 4], s[(k + 3) % 4]];
+  };
+  const score = (p: Finder[]) => {
+    const ms = p.filter((f) => f.hits > 0).map((f) => f.m);
+    const mMax = Math.max(...ms), mMin = Math.min(...ms);
+    if (mMax / mMin > 2) return 0;
+    const mAvg = ms.reduce((a, b) => a + b, 0) / ms.length;
+    let sign = 0;
+    for (let i = 0; i < 4; i++) {
+      const c = cross(p[i], p[(i + 1) % 4], p[(i + 2) % 4]);
+      const s = Math.sign(c);
+      if (!s || (sign && s !== sign)) return 0;
+      sign = s;
+    }
+    const sides = [0, 1, 2, 3].map((i) => dist(p[i], p[(i + 1) % 4]));
+    if (Math.min(...sides) / mAvg < 15) return 0;
+    if (sides[0] / sides[2] > 2.2 || sides[2] / sides[0] > 2.2) return 0;
+    if (sides[1] / sides[3] > 2.2 || sides[3] / sides[1] > 2.2) return 0;
+    for (let i = 0; i < 4; i++) {
+      const a = p[(i + 3) % 4], b = p[i], c = p[(i + 1) % 4];
+      const cos = ((a.x - b.x) * (c.x - b.x) + (a.y - b.y) * (c.y - b.y)) / (dist(a, b) * dist(b, c));
+      if (Math.abs(cos) > 0.6) return 0;
+    }
+    return Math.abs(cross(p[0], p[1], p[2])) / 2 + Math.abs(cross(p[0], p[2], p[3])) / 2;
+  };
+
+  for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) for (let c = b + 1; c < n; c++) {
+    for (let d = c + 1; d < n; d++) {
+      const q = order([top[a], top[b], top[c], top[d]]);
+      const s = score(q);
+      if (s) out.push({ q, score: s * 2 });
+    }
+    // Three finders: the missing corner completes a parallelogram opposite
+    // whichever of the three sits at the right-angle-ish vertex.
+    const tri = [top[a], top[b], top[c]];
+    for (let v = 0; v < 3; v++) {
+      const A = tri[v], B = tri[(v + 1) % 3], C = tri[(v + 2) % 3];
+      const D: Finder = { x: B.x + C.x - A.x, y: B.y + C.y - A.y, m: (A.m + B.m + C.m) / 3, hits: 0 };
+      const q = order([A, B, C, D]);
+      const s = score(q);
+      if (s) out.push({ q, score: s });
     }
   }
   out.sort((x, y) => y.score - x.score);
   const seen = new Set<string>();
   const uniq: Finder[][] = [];
   for (const o of out) {
-    const key = o.q.map((f) => `${Math.round(f.x)},${Math.round(f.y)}`).join("|");
+    const key = o.q.map((f) => `${Math.round(f.x / 4)},${Math.round(f.y / 4)}`).join("|");
     if (seen.has(key)) continue;
     seen.add(key);
     uniq.push(o.q);
@@ -469,32 +519,59 @@ function bilinearSample(g: Uint8Array, w: number, h: number, x: number, y: numbe
   return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
 }
 
-/** Map continuous grid coordinates (cells) -> image pixels. */
-function makeMapper(q: Finder[], cols: number, rows: number) {
-  const [tl, tr, bl, br] = q;
-  const sx = cols - 2 * FC, sy = rows - 2 * FC;
-  return (cx: number, cy: number): Pt => {
-    const u = (cx - FC) / sx, v = (cy - FC) / sy;
-    return {
-      x: (1 - u) * (1 - v) * tl.x + u * (1 - v) * tr.x + (1 - u) * v * bl.x + u * v * br.x,
-      y: (1 - u) * (1 - v) * tl.y + u * (1 - v) * tr.y + (1 - u) * v * bl.y + u * v * br.y,
-    };
+/** Perspective transform (homography) taking 4 source points to 4 targets. */
+function homography(src: Pt[], dst: Pt[]): (x: number, y: number) => Pt {
+  const A: number[][] = [];
+  for (let i = 0; i < 4; i++) {
+    const { x, y } = src[i], { x: u, y: v } = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+  // Gaussian elimination with partial pivoting on the 8x9 augmented matrix.
+  for (let c = 0; c < 8; c++) {
+    let p = c;
+    for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    const d = A[c][c] || 1e-12;
+    for (let k = c; k < 9; k++) A[c][k] /= d;
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue;
+      const f = A[r][c];
+      if (f) for (let k = c; k < 9; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  const [a, b, c, d, e, f, g, h] = A.map((row) => row[8]);
+  return (x, y) => {
+    const z = g * x + h * y + 1;
+    return { x: (a * x + b * y + c) / z, y: (d * x + e * y + f) / z };
   };
 }
 
-/** Black/white reference levels measured at each finder (dark centre, light ring). */
-function calibrate(g: Uint8Array, w: number, h: number, q: Finder[]) {
-  const cal = q.map((f) => {
+/** q = [TL, TR, BL, BR] in image pixels. Returns cell coords -> pixels. */
+function makeMapper(q: Finder[], cols: number, rows: number) {
+  const src = [
+    { x: FC, y: FC }, { x: cols - FC, y: FC },
+    { x: FC, y: rows - FC }, { x: cols - FC, y: rows - FC },
+  ];
+  return homography(src, q);
+}
+
+type Mapper = ReturnType<typeof makeMapper>;
+
+/** Black/white reference at each finder: dark centre and light ring, found
+ *  through the mapper so rotation and perspective are handled. */
+function calibrate(g: Uint8Array, w: number, h: number, q: Finder[], map: Mapper, cols: number, rows: number) {
+  const centres = [[FC, FC], [cols - FC, FC], [FC, rows - FC], [cols - FC, rows - FC]];
+  const ring = 2 * FMOD; // light ring is 2 modules from the centre
+  const cal = q.map((f, i) => {
     if (f.hits === 0) return null;
-    const s = f.m; // module in px
-    const black = bilinearSample(g, w, h, f.x, f.y);
-    const white = (
-      bilinearSample(g, w, h, f.x - 2 * s, f.y) + bilinearSample(g, w, h, f.x + 2 * s, f.y) +
-      bilinearSample(g, w, h, f.x, f.y - 2 * s) + bilinearSample(g, w, h, f.x, f.y + 2 * s)
-    ) / 4;
-    return { black, white };
+    const [cx, cy] = centres[i];
+    const at = (dx: number, dy: number) => { const p = map(cx + dx, cy + dy); return bilinearSample(g, w, h, p.x, p.y); };
+    return {
+      black: at(0, 0),
+      white: (at(-ring, 0) + at(ring, 0) + at(0, -ring) + at(0, ring)) / 4,
+    };
   });
-  // A synthesised (hidden) corner borrows the average of the real ones.
   const real = cal.filter((c): c is { black: number; white: number } => !!c);
   const avg = {
     black: real.reduce((a, c) => a + c.black, 0) / Math.max(1, real.length),
@@ -503,9 +580,9 @@ function calibrate(g: Uint8Array, w: number, h: number, q: Finder[]) {
   return cal.map((c) => c ?? avg);
 }
 
-function readHeader(g: Uint8Array, w: number, h: number, q: Finder[], cols: number, rowsEst: number) {
-  const map = makeMapper(q, cols, rowsEst);
-  const cal = calibrate(g, w, h, q)[0];
+function readHeader(g: Uint8Array, w: number, h: number, q: Finder[], cols: number, rows: number) {
+  const map = makeMapper(q, cols, rows);
+  const cal = calibrate(g, w, h, q, map, cols, rows)[0];
   const mid = (cal.black + cal.white) / 2;
   const cw = new Uint8Array(HDR_BITS / 8);
   for (let i = 0; i < HDR_BITS; i++) {
@@ -523,40 +600,71 @@ function readHeader(g: Uint8Array, w: number, h: number, q: Finder[], cols: numb
   return { cols: hc, rows: hr, bpc: bpc as 1 | 2, parity };
 }
 
-export function decodeImage(g: Uint8Array, w: number, h: number): DecodeResult {
-  const cands = findFinders(g, w, h);
-  const rects = pickRectangles(cands);
-  if (!rects.length) return { finders: null, corrected: 0, failedBlocks: 0, error: "No code found" };
-
-  for (const q of rects) {
-    const [tl, tr, bl] = q;
-    const cellPx = ((tl.m + tr.m + bl.m + q[3].m) / 4) / FMOD;
-    const colsEst = Math.round((tr.x - tl.x) / cellPx) + 2 * FC;
-    const rowsEst = Math.round((bl.y - tl.y) / cellPx) + 2 * FC;
-
-    let hdr: ReturnType<typeof readHeader> = null;
-    const span = Math.max(3, Math.round(colsEst * 0.08));
-    for (let d = 0; d <= span && !hdr; d++) {
-      hdr = readHeader(g, w, h, q, colsEst + d, rowsEst) ?? (d ? readHeader(g, w, h, q, colsEst - d, rowsEst) : null);
+/** Try to read the format header for one corner assignment. The grid size is
+ *  not known yet, so candidate column counts are tried outward from an
+ *  estimate based on the finder size; the header's own checksum confirms
+ *  the right one. */
+function findHeader(g: Uint8Array, w: number, h: number, q: Finder[]) {
+  const [tl, tr, bl] = q;
+  const real = q.filter((f) => f.hits > 0);
+  const mRaw = real.reduce((a, f) => a + f.m, 0) / real.length;
+  // Run lengths through a rotated square are stretched by 1/cos(angle).
+  const ang = Math.atan2(tr.y - tl.y, tr.x - tl.x);
+  const stretch = Math.max(Math.abs(Math.cos(ang)), Math.abs(Math.sin(ang)));
+  const cellPx = (mRaw * stretch) / FMOD;
+  const top = dist(tl, tr), left = dist(tl, bl);
+  const colsEst = Math.round(top / cellPx) + 2 * FC;
+  const ratio = left / top;
+  const lo = Math.max(MIN_COLS, Math.round(colsEst * 0.7)), hi = Math.round(colsEst * 1.35);
+  for (let d = 0; ; d++) {
+    const tries = d === 0 ? [colsEst] : [colsEst + d, colsEst - d];
+    let inRange = false;
+    for (const cols of tries) {
+      if (cols < lo || cols > hi) continue;
+      inRange = true;
+      const rows = Math.max(MIN_ROWS, Math.round(ratio * (cols - 2 * FC)) + 2 * FC);
+      const hdr = readHeader(g, w, h, q, cols, rows);
+      if (hdr) return hdr;
     }
-    if (!hdr) continue;
-
-    const layout = makeLayout(hdr.cols, hdr.rows, hdr.bpc, hdr.parity);
-    const lay = { cols: hdr.cols, rows: hdr.rows, bpc: hdr.bpc, parity: hdr.parity, cellPx: (tr.x - tl.x) / (hdr.cols - 2 * FC) };
-    const r = decodeData(g, w, h, q, layout);
-    return { finders: q, layout: lay, ...r };
+    if (!inRange) return null;
   }
-  return { finders: rects[0], corrected: 0, failedBlocks: 0, error: "Format header unreadable" };
 }
 
-function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: Layout) {
+export function decodeImage(g: Uint8Array, w: number, h: number): DecodeResult {
+  const I = integral(g, w, h);
+  const cands = findFinders(g, w, h, I);
+  const quads = pickQuads(cands);
+  if (!quads.length) return { finders: null, corrected: 0, failedBlocks: 0, error: "No code found" };
+
+  for (const p of quads) {
+    // p is clockwise: try each corner as the grid's top-left, so the image
+    // can be rotated by any multiple of 90 degrees.
+    for (let rot = 0; rot < 4; rot++) {
+      const c = [p[rot], p[(rot + 1) % 4], p[(rot + 2) % 4], p[(rot + 3) % 4]];
+      const q = [c[0], c[1], c[3], c[2]]; // TL, TR, BL, BR
+      const hdr = findHeader(g, w, h, q);
+      if (!hdr) continue;
+      const layout = makeLayout(hdr.cols, hdr.rows, hdr.bpc, hdr.parity);
+      const lay = { cols: hdr.cols, rows: hdr.rows, bpc: hdr.bpc, parity: hdr.parity, cellPx: dist(q[0], q[1]) / (hdr.cols - 2 * FC) };
+      const r = decodeData(g, w, h, q, layout, I);
+      return { finders: q, layout: lay, ...r };
+    }
+  }
+  const p = quads[0];
+  return { finders: [p[0], p[1], p[3], p[2]], corrected: 0, failedBlocks: 0, error: "Format header unreadable" };
+}
+
+function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: Layout, I: Float64Array) {
   const { cols, rows, bpc } = layout;
   const map = makeMapper(q, cols, rows);
-  const cal = calibrate(g, w, h, q);
-
-  // Bilinearly interpolate the black/white references across the grid so
-  // uneven brightness (vignetting, colour-managed captures) is tolerated.
+  const cal = calibrate(g, w, h, q, map, cols, rows);
+  const cellPx = dist(q[0], q[1]) / (cols - 2 * FC);
+  const win = Math.max(3, cellPx * 5);
   const sx = cols - 2 * FC, sy = rows - 2 * FC;
+
+  // For 1 bit per cell the data is whitened, so about half the cells around
+  // any point are dark: the local mean is a good threshold even under
+  // uneven lighting from a camera.
   const stream = new Uint8Array(layout.capacityBytes);
   let bit = 0;
   const cells = layout.dataCells;
@@ -564,17 +672,19 @@ function decodeData(g: Uint8Array, w: number, h: number, q: Finder[], layout: La
     const idx = cells[ci];
     const c = idx % cols, r = (idx - c) / cols;
     const p = map(c + 0.5, r + 0.5);
-    const u = Math.min(1, Math.max(0, (c + 0.5 - FC) / sx));
-    const v = Math.min(1, Math.max(0, (r + 0.5 - FC) / sy));
-    const blk = (1 - u) * (1 - v) * cal[0].black + u * (1 - v) * cal[1].black + (1 - u) * v * cal[2].black + u * v * cal[3].black;
-    const wht = (1 - u) * (1 - v) * cal[0].white + u * (1 - v) * cal[1].white + (1 - u) * v * cal[2].white + u * v * cal[3].white;
     const lum = bilinearSample(g, w, h, p.x, p.y);
-    const t = (lum - blk) / Math.max(1, wht - blk); // 0 = black, 1 = white
     let sym: number;
-    if (bpc === 1) sym = t < 0.5 ? 1 : 0;
-    else {
-      const lvl = Math.max(0, Math.min(3, Math.round((1 - t) * 3)));
-      sym = GRAY_INV[lvl];
+    if (bpc === 1) {
+      sym = lum < boxMean(I, w, h, p.x, p.y, win) ? 1 : 0;
+    } else {
+      // Four grey levels need absolute references: interpolate the finder
+      // black/white levels across the grid.
+      const u = Math.min(1, Math.max(0, (c + 0.5 - FC) / sx));
+      const v = Math.min(1, Math.max(0, (r + 0.5 - FC) / sy));
+      const blk = (1 - u) * (1 - v) * cal[0].black + u * (1 - v) * cal[1].black + (1 - u) * v * cal[2].black + u * v * cal[3].black;
+      const wht = (1 - u) * (1 - v) * cal[0].white + u * (1 - v) * cal[1].white + (1 - u) * v * cal[2].white + u * v * cal[3].white;
+      const t = (lum - blk) / Math.max(1, wht - blk); // 0 = black, 1 = white
+      sym = GRAY_INV[Math.max(0, Math.min(3, Math.round((1 - t) * 3)))];
     }
     for (let k = bpc - 1; k >= 0; k--) {
       const byte = bit >> 3;

@@ -44,6 +44,12 @@ const ECC_LEVELS = [
 ];
 
 type Mode = "send" | "receive";
+type Source = "camera" | "screen";
+
+// Phones and tablets have no screen capture API, only the camera.
+const canCaptureScreen = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
+const canUseCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+const canFullscreen = typeof document !== "undefined" && !!document.fullscreenEnabled;
 
 export function TransferView() {
   const [mode, setMode] = useState<Mode>(() => (localStorage.getItem("xfer_mode") as Mode) || "send");
@@ -57,7 +63,7 @@ export function TransferView() {
         through a sensor. The encoder turns a file into bytes, adds Reed-Solomon error correction and draws the
         result as a grid of black and white cells. Think of it as a live QR code: instead of one static image
         holding a few hundred bytes, the grid changes frame by frame and carries a whole file. The decoder, another instance of this app, watches that grid with
-        screen capture, finds the corner markers, reads each cell, fixes any errors and checks the SHA-256 hash, so
+        a phone camera or screen capture, finds the corner markers, reads each cell, fixes any errors and checks the SHA-256 hash, so
         the rebuilt file is identical to the original. The idea works in both directions if each side runs an
         encoder and a decoder, and it is not limited to vision: sound, light or any other signal one device can
         produce and the other can sense could carry the same data. Everything runs locally in the browser.
@@ -245,7 +251,7 @@ function SendPanel() {
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => { e.preventDefault(); setDragOver(false); onPick(e.dataTransfer.files?.[0]); }}
-            onDoubleClick={() => prepared && toggleFullscreen()}
+            onDoubleClick={() => prepared && canFullscreen && toggleFullscreen()}
           >
             {!prepared ? (
               <div className="monitor-feed-empty">
@@ -271,7 +277,9 @@ function SendPanel() {
                 Frame {frameIdx + 1} of {frameCount}{loops > 0 ? `, loop ${loops + 1}` : ""}
               </span>
               <span style={{ flex: 1 }} />
-              <button className="monitor-ctrl-btn" onClick={toggleFullscreen}>{fullscreen ? "Exit full screen" : "Full screen"}</button>
+              {canFullscreen && (
+                <button className="monitor-ctrl-btn" onClick={toggleFullscreen}>{fullscreen ? "Exit full screen" : "Full screen"}</button>
+              )}
               <button
                 className={`action-btn ${running ? "action-btn--stop" : "action-btn--start"} monitor-scan-btn`}
                 onClick={() => setRunning((r) => !r)}
@@ -331,7 +339,7 @@ function SendPanel() {
           <div className="monitor-field">
             <label className="chat-settings-label">Cell size</label>
             <select className="speech-select" value={cellPx} onChange={(e) => setCellPx(Number(e.target.value))}>
-              {[2, 3, 4, 5, 6, 8].map((n) => <option key={n} value={n}>{n} px{n === 3 ? " (default)" : n <= 2 ? " (sharp capture)" : n >= 6 ? " (blurry capture)" : ""}</option>)}
+              {[2, 3, 4, 5, 6, 8].map((n) => <option key={n} value={n}>{n} px{n === 3 ? " (screen capture)" : n <= 2 ? " (screen capture, sharp)" : n >= 6 ? " (phone camera)" : ""}</option>)}
             </select>
           </div>
           <div className="monitor-field">
@@ -402,6 +410,9 @@ function ReceivePanel() {
   const autoSaveRef = useRef(true);
 
   const [hasStream, setHasStream] = useState(false);
+  const [source, setSource] = useState<Source>("camera");
+  const [facing, setFacing] = useState<"environment" | "user">("environment");
+  const [aspect, setAspect] = useState(16 / 9);
   const [screenError, setScreenError] = useState<string | null>(null);
   const [xfer, setXfer] = useState<Transfer | null>(null);
   const [done, setDone] = useState<Done | null>(null);
@@ -476,7 +487,7 @@ function ReceivePanel() {
     w.onmessage = (e: MessageEvent<DecodeResponse>) => {
       busyRef.current = false;
       const { result, ms } = e.data;
-      drawOverlay(result.finders, result.layout?.cellPx);
+      drawOverlay(result.finders);
       setStats((s) => ({
         scanned: s.scanned + 1,
         decoded: s.decoded + (result.frame ? 1 : 0),
@@ -491,7 +502,7 @@ function ReceivePanel() {
   }, [acceptFrame]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Overlay (detected finders)
-  const drawOverlay = (finders: Finder[] | null, _cell?: number) => {
+  const drawOverlay = (finders: Finder[] | null) => {
     const canvas = overlayRef.current, video = videoRef.current;
     if (!canvas || !video || !video.videoWidth) return;
     const b = canvas.getBoundingClientRect();
@@ -522,6 +533,18 @@ function ReceivePanel() {
     setHasStream(false);
   }, []);
 
+  const attach = useCallback(async (stream: MediaStream, src: Source) => {
+    streamRef.current = stream;
+    setSource(src);
+    const v = videoRef.current;
+    if (v) {
+      v.srcObject = stream;
+      await v.play().catch(() => null);
+    }
+    setHasStream(true);
+    stream.getVideoTracks()[0].addEventListener("ended", stopStream);
+  }, [stopStream]);
+
   const selectScreen = useCallback(async () => {
     setScreenError(null);
     stopStream();
@@ -530,17 +553,29 @@ function ReceivePanel() {
         video: { frameRate: 30, width: { ideal: 3840 }, height: { ideal: 2160 } } as MediaTrackConstraints,
         audio: false,
       });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        await videoRef.current.play().catch(() => null);
-      }
-      setHasStream(true);
-      s.getVideoTracks()[0].addEventListener("ended", stopStream);
+      await attach(s, "screen");
     } catch (e) {
       if ((e as Error)?.name !== "NotAllowedError") setScreenError(`Screen capture failed: ${(e as Error)?.message ?? ""}`);
     }
-  }, [stopStream]);
+  }, [stopStream, attach]);
+
+  const startCamera = useCallback(async (facing: "environment" | "user") => {
+    setScreenError(null);
+    stopStream();
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: false,
+      });
+      setFacing(facing);
+      await attach(s, "camera");
+    } catch (e) {
+      const name = (e as Error)?.name;
+      setScreenError(name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access for this site and try again."
+        : `Camera failed: ${(e as Error)?.message ?? ""}`);
+    }
+  }, [stopStream, attach]);
 
   // Grab a frame whenever the worker is free.
   useEffect(() => {
@@ -608,21 +643,49 @@ function ReceivePanel() {
       {screenError && <p className="error-banner" style={{ marginBottom: 0 }}>{screenError}</p>}
       <div className="monitor-grid">
         <div className="monitor-feed-wrap">
-          <div className="monitor-feed">
+          <div className="monitor-feed xfer-feed" style={{ aspectRatio: String(hasStream ? aspect : 16 / 9) }}>
             {!hasStream && (
               <div className="monitor-feed-empty">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--border)" strokeWidth="1.5">
                   <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
                 </svg>
-                <p style={{ margin: 0 }}>Pick the screen or window showing the encoded image</p>
-                <button className="action-btn action-btn--start" onClick={selectScreen}>Select Screen</button>
+                <p style={{ margin: 0, textAlign: "center", padding: "0 16px" }}>
+                  Point a camera at the encoded grid, or capture the screen or window showing it
+                </p>
+                <div className="xfer-row" style={{ marginTop: 0, flexWrap: "wrap", justifyContent: "center" }}>
+                  {canUseCamera && (
+                    <button className="action-btn action-btn--start" onClick={() => startCamera("environment")}>Use Camera</button>
+                  )}
+                  {canCaptureScreen && (
+                    <button className="action-btn action-btn--clear" onClick={selectScreen}>Capture Screen</button>
+                  )}
+                </div>
+                {!canUseCamera && !canCaptureScreen && (
+                  <p style={{ margin: 0 }}>This browser has no camera or screen capture access. Try opening the page over HTTPS.</p>
+                )}
               </div>
             )}
-            <video ref={videoRef} className="monitor-video" autoPlay playsInline muted style={{ display: hasStream ? "block" : "none" }} />
+            <video
+              ref={videoRef}
+              className="monitor-video"
+              autoPlay
+              playsInline
+              muted
+              style={{ display: hasStream ? "block" : "none" }}
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight);
+              }}
+            />
             {hasStream && <canvas ref={overlayRef} className="monitor-overlay" style={{ cursor: "default" }} />}
             {hasStream && (
               <div className="monitor-feed-controls">
-                <button className="monitor-ctrl-btn" onClick={selectScreen}>Change</button>
+                {source === "camera" && (
+                  <button className="monitor-ctrl-btn" onClick={() => startCamera(facing === "environment" ? "user" : "environment")}>
+                    Switch camera
+                  </button>
+                )}
+                {source === "screen" && <button className="monitor-ctrl-btn" onClick={selectScreen}>Change</button>}
                 <button className="monitor-ctrl-btn" onClick={stopStream}>Stop</button>
               </div>
             )}
@@ -630,7 +693,7 @@ function ReceivePanel() {
           <p className="monitor-selection-hint">
             {stats.scanned > 0
               ? `Scanned ${stats.scanned}, decoded ${stats.decoded}, ${stats.lastMs} ms per frame${stats.grid ? `, ${stats.grid}` : ""}${stats.lastError ? `. ${stats.lastError}` : ""}`
-              : "Tip: the grid only needs to be visible. It can be small, off-centre or scaled."}
+              : "Tip: keep all four corner squares in view. The grid can be small, tilted or seen at an angle. For a phone camera, use 6 or 8 px cells and a low frame rate on the encoder."}
           </p>
         </div>
 

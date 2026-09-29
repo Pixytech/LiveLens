@@ -35,8 +35,8 @@ layer via WebAssembly.
   black and white (or four grey level) cells with QR-style corner markers,
   in effect a live QR code that changes frame by frame and carries a whole
   file instead of a few hundred bytes.
-  The decoder, a second instance of the app, reads that grid through screen
-  capture, corrects errors, checks the SHA-256 and rebuilds the identical
+  The decoder, a second instance of the app, reads that grid through a
+  phone or laptop camera, or through screen capture, corrects errors, checks the SHA-256 and rebuilds the identical
   file. The same approach works in both directions, and with other media
   such as sound or light. The file can also be saved and loaded as a
   lossless PNG (3 bytes per pixel).
@@ -107,6 +107,14 @@ file -> "LLF1" | name | size | SHA-256 | body   (body is AES-GCM encrypted if a 
 - **Integrity**: each frame carries a CRC-32 and the whole file a SHA-256.
   Frames can arrive in any order; the encoder loops until the decoder has
   them all.
+
+Camera input: the decoder maps the four corner markers through a
+perspective transform (homography) and tries all four 90-degree
+orientations, so the grid can be tilted, rotated or seen at an angle. It
+thresholds each cell against its local neighbourhood, which copes with
+uneven lighting and glare. For a phone camera use 6 or 8 px cells and 2 to
+4 fps on the encoder. Phones have no screen capture API, so on mobile the
+camera is the only live source.
 
 There is no fixed size limit. With 3 px cells on a 1280 x 720 area a frame
 holds about 9.5 KB, so 1 MB is about 108 frames, roughly 30 seconds at
