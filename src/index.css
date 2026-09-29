@@ -1301,3 +1301,148 @@ body {
   font-weight: 700;
 }
 .snake-log-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+/* Pixel Codec view */
+
+.xfer-mode-row { display: flex; align-items: center; gap: 12px; }
+
+.xfer-stage {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--panel);
+}
+.xfer-stage--fs {
+  border: none;
+  border-radius: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #fff;
+}
+
+.xfer-area {
+  position: relative;
+  background: #fff;                 /* white quiet zone around the code */
+  aspect-ratio: 16 / 9;
+  min-height: 180px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.xfer-area--empty { background: #000; }
+.xfer-area--drag { outline: 2px dashed var(--teal); outline-offset: -6px; }
+.xfer-stage--fs .xfer-area { aspect-ratio: auto; flex: 1; min-height: 0; }
+
+.xfer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.xfer-canvas {
+  display: block;
+  image-rendering: pixelated;       /* never smooth cell edges */
+  image-rendering: crisp-edges;
+}
+
+.xfer-frame-badge {
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: var(--ink);
+  background: rgba(0,0,0,0.6);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.xfer-file-btn { display: inline-block; }
+
+.xfer-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 0.82rem;
+  margin-top: 4px;
+}
+.xfer-kv > span { color: var(--dim); }
+.xfer-kv > b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.xfer-mono { font-family: "Fira Code", ui-monospace, monospace; font-size: 0.76rem; }
+
+.xfer-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.xfer-row > input { flex: 1; }
+
+.xfer-inline-btn {
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+}
+.xfer-inline-btn:disabled { opacity: 0.4; cursor: default; }
+
+.xfer-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 10px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.xfer-frame {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.xfer-frame--ok { background: var(--teal); }
+
+.xfer-done {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.xfer-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--dim);
+  margin-top: 12px;
+  cursor: pointer;
+}
+
+.xfer-log {
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 0.74rem;
+  color: var(--dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.xfer-arch > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+  user-select: none;
+}
+.xfer-arch > summary::-webkit-details-marker { display: none; }
+.xfer-arch > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1em;
+}
+.xfer-arch[open] > summary::before { content: "-"; }
+.xfer-arch[open] > summary { margin-bottom: 4px; }

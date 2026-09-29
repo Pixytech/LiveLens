@@ -1,6 +1,6 @@
 # LiveLens
 
-Five browser-only demos built around one idea: run the model in the tab, not
+Six browser-only demos built around one idea: run the model in the tab, not
 on a server. No backend, no uploaded video, no API keys required for any of
 it — client-side computer vision, in-browser LLMs, and a Python statistics
 layer via WebAssembly.
@@ -28,6 +28,18 @@ layer via WebAssembly.
   only tab in this app where audio actually leaves the browser.
 - **Monitor** — pick a window or screen with `getDisplayMedia`, drag to
   select a region, and run OCR on it with Tesseract.js. Fully local.
+
+- **Pixel Codec** - moves data between two programs with computer vision.
+  The encoder turns a file into bytes (optionally AES-256-GCM encrypted),
+  adds Reed-Solomon error correction and draws the result as a grid of
+  black and white (or four grey level) cells with QR-style corner markers,
+  in effect a live QR code that changes frame by frame and carries a whole
+  file instead of a few hundred bytes.
+  The decoder, a second instance of the app, reads that grid through screen
+  capture, corrects errors, checks the SHA-256 and rebuilds the identical
+  file. The same approach works in both directions, and with other media
+  such as sound or light. The file can also be saved and loaded as a
+  lossless PNG (3 bytes per pixel).
 
 ## Architecture (Detect tab)
 
@@ -70,6 +82,35 @@ The tab this repo started as, and still the clearest example of the split:
 
 The other four tabs don't need this split — Snake and Chat lean entirely on
 `transformers.js`, Speech on the browser's own STT, Monitor on Tesseract.js.
+
+## How the Pixel Codec tab encodes data
+
+```
+file -> "LLF1" | name | size | SHA-256 | body   (body is AES-GCM encrypted if a passphrase is set)
+     -> split into frame-sized chunks
+     -> per frame: 26-byte header (session, index, count, CRC-32) + chunk
+     -> Reed-Solomon blocks (up to 255 bytes, 16 to 96 parity bytes each), byte-interleaved
+     -> XOR whitening mask -> 1 or 2 bits per cell -> grid + corner markers + format header
+```
+
+- **Corner markers**: four 1:1:3:1:1 square patterns, found by scanning runs
+  of dark and light pixels in both directions, as a QR reader does. Their
+  centres give a bilinear map from cell coordinates to captured pixels, so
+  the grid can be scaled, moved or shown at any size in the capture.
+- **Format header**: a small Reed-Solomon protected strip beside the
+  top-left marker records grid size, bits per cell and parity, so the
+  decoder adapts to whatever the encoder chose.
+- **Reed-Solomon and interleaving**: `src/transfer/rs.ts` is a GF(256)
+  codec (Berlekamp-Massey, Chien search, Forney). Interleaving puts
+  neighbouring bytes on screen into different blocks, so a compression
+  artefact costs each block only a byte or two.
+- **Integrity**: each frame carries a CRC-32 and the whole file a SHA-256.
+  Frames can arrive in any order; the encoder loops until the decoder has
+  them all.
+
+There is no fixed size limit. With 3 px cells on a 1280 x 720 area a frame
+holds about 9.5 KB, so 1 MB is about 108 frames, roughly 30 seconds at
+4 fps. Larger files work the same way and just take proportionally longer.
 
 ## Running locally
 

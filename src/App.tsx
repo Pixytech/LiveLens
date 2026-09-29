@@ -4,7 +4,7 @@ import { AppTabs, type TabId } from "./components/AppTabs";
 import { useObjectDetection } from "./hooks/useObjectDetection";
 import { usePyodideAnalytics } from "./hooks/usePyodideAnalytics";
 
-const VALID_TABS = new Set<TabId>(["detect", "speech", "chat", "monitor", "snake"]);
+const VALID_TABS = new Set<TabId>(["detect", "speech", "chat", "monitor", "snake", "transfer"]);
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
